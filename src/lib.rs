@@ -1,3 +1,7 @@
 pub mod lexer;
+pub mod parser;
+pub mod utils;
 
 pub use lexer::*;
+pub use parser::*;
+pub use utils::*;

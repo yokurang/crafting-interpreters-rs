@@ -311,6 +311,8 @@ impl Scanner {
                 // `peek()` instead of `match()`.
                 self.line += 1;
             }
+            // maximal munch is when a sequence of characters can match to two or more possible tokens.
+            // the sequence of characters will match to the token with the most number of character matches.
             '"' => self.string(),
             c => {
                 if self.is_digit(c) {
