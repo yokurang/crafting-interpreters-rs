@@ -2,7 +2,7 @@ use std::env;
 use crafting_interpreters::lexer::{run_file, run_prompt};
 use crafting_interpreters::lexer::{Token, TokenType};
 use crafting_interpreters::expr::Expr;
-use crafting_interpreters::{Literal};
+use crafting_interpreters::{define_ast, Literal};
 
 // fn main() {
 // 
@@ -52,4 +52,28 @@ use crafting_interpreters::{Literal};
 //     }
 // }
 
-fn main() {}
+fn main() -> std::io::Result<()> {
+    let output_dir = "./generated";
+
+    define_ast(
+        output_dir,
+        "Expr",
+        vec![
+            "Binary   : Box<Expr> left, Token operator, Box<Expr> right",
+            "Grouping : Box<Expr> expression",
+            "Literal  : LiteralValue value",
+            "Unary    : Token operator, Box<Expr> right",
+        ],
+    )?;
+
+    define_ast(
+        output_dir,
+        "Stmt",
+        vec![
+            "Expression : Box<Expr> expression",
+            "Print      : Box<Expr> expression",
+        ],
+    )?;
+
+    Ok(())
+}

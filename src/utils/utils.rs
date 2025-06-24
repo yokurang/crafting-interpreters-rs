@@ -5,6 +5,7 @@ use std::path::Path;
 
 fn main() -> Result<()> {
     let output_dir = "./generated";
+
     define_ast(
         output_dir,
         "Expr",
@@ -14,8 +15,20 @@ fn main() -> Result<()> {
             "Literal  : LiteralValue value",
             "Unary    : Token operator, Box<Expr> right",
         ],
-    )
+    )?;
+
+    define_ast(
+        output_dir,
+        "Stmt",
+        vec![
+            "Expression : Box<Expr> expression",
+            "Print      : Box<Expr> expression",
+        ],
+    )?;
+
+    Ok(())
 }
+
 
 pub fn define_ast(output_dir: &str, base_name: &str, types: Vec<&str>) -> Result<()> {
     let path = Path::new(output_dir).join(format!("{}.rs", base_name.to_lowercase()));

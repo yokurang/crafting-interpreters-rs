@@ -1,6 +1,6 @@
 use crate::expr::Expr;
 use crate::lexer::Token;
-use crate::{Literal, TokenType};
+use crate::{Literal, Stmt, TokenType};
 /*
 The parser takes the tokens as input and produces an abstract syntax tree, a more information-rich
 data structure, as output. As a reminder, tokens are the output of the lexer, which takes raw
@@ -156,13 +156,34 @@ impl Parser {
         Self { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> Option<Expr> {
-        match self.expression() {
-            Ok(expr) => Some(expr),
-            // what to do if a syntax error occurs?
-            Err(_) => None,
+    pub fn parse(&mut self) -> Vec<Stmt> {
+        let mut statements = Vec::new();
+
+        while !self.is_at_end() {
+            match self.statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(_) => self.synchronize(), // Skip tokens until we're at a new statement
+            }
         }
+
+        statements
     }
+    
+    fn statement(&self) -> Stmt {
+        
+        if self.match_stmt(TokenType::Print) {
+            self.print_statement()
+        }
+        self.expression_stmt()
+    }
+
+    // pub fn parse(&mut self) -> Option<Expr> {
+    //     match self.expression() {
+    //         Ok(expr) => Some(expr),
+    //         // what to do if a syntax error occurs?
+    //         Err(_) => None,
+    //     }
+    // }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
         self.equality()
