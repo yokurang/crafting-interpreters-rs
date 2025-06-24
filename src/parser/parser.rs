@@ -1,5 +1,5 @@
-use crate::lexer::{Token};
 use crate::expr::Expr;
+use crate::lexer::Token;
 use crate::{Literal, TokenType};
 /*
 The parser takes the tokens as input and produces an abstract syntax tree, a more information-rich
@@ -153,7 +153,7 @@ impl Parser {
     These are called error productions.
     */
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0}
+        Self { tokens, current: 0 }
     }
 
     pub fn parse(&mut self) -> Option<Expr> {
@@ -197,7 +197,7 @@ impl Parser {
             expr = Expr::Binary {
                 left: Box::new(expr),
                 operator,
-                right: Box::new(right)
+                right: Box::new(right),
             }
         }
         Ok(expr)
@@ -214,7 +214,7 @@ impl Parser {
             expr = Expr::Binary {
                 left: Box::new(expr),
                 operator,
-                right: Box::new(right)
+                right: Box::new(right),
             }
         }
         Ok(expr)
@@ -229,7 +229,7 @@ impl Parser {
             expr = Expr::Binary {
                 left: Box::new(expr),
                 operator,
-                right: Box::new(right)
+                right: Box::new(right),
             }
         }
         Ok(expr)
@@ -241,8 +241,8 @@ impl Parser {
             let right: Expr = self.unary()?;
             return Ok(Expr::Unary {
                 operator,
-                right: Box::new(right)
-            })
+                right: Box::new(right),
+            });
         }
         self.primary()
     }
@@ -253,17 +253,23 @@ impl Parser {
         match self.peek().token_type {
             TokenType::False => {
                 self.advance();
-                Ok(Expr::Literal { value: Literal::Bool(false) })
+                Ok(Expr::Literal {
+                    value: Literal::Bool(false),
+                })
             }
 
             TokenType::True => {
                 self.advance();
-                Ok(Expr::Literal { value: Literal::Bool(true) })
+                Ok(Expr::Literal {
+                    value: Literal::Bool(true),
+                })
             }
 
             TokenType::Nil => {
                 self.advance();
-                Ok(Expr::Literal { value: Literal::Nil })
+                Ok(Expr::Literal {
+                    value: Literal::Nil,
+                })
             }
 
             TokenType::Number | TokenType::String => {
@@ -274,12 +280,13 @@ impl Parser {
 
             TokenType::LeftParen => {
                 let expr = self.expression()?;
-                self.consume(TokenType::RightParen, "Expect ')' after expression.").expect("TODO: panic message");
-                Ok(Expr::Grouping { expression: Box::new(expr) })
+                self.consume(TokenType::RightParen, "Expect ')' after expression.")
+                    .expect("TODO: panic message");
+                Ok(Expr::Grouping {
+                    expression: Box::new(expr),
+                })
             }
-            _ => {
-                Err(Parser::error(self.peek(), "Expected an expression."))
-            }
+            _ => Err(Parser::error(self.peek(), "Expected an expression.")),
         }
     }
 
@@ -294,7 +301,9 @@ impl Parser {
     }
 
     fn check(&self, token_type: &TokenType) -> bool {
-        if self.is_at_end() { return false }
+        if self.is_at_end() {
+            return false;
+        }
         self.peek().token_type == *token_type
     }
 
@@ -320,7 +329,9 @@ impl Parser {
     }
 
     fn advance(&mut self) -> Token {
-        if !self.is_at_end() { self.current += 1 };
+        if !self.is_at_end() {
+            self.current += 1
+        };
         self.previous().clone()
     }
 
@@ -340,8 +351,8 @@ impl Parser {
     }
 
     fn synchronize(&mut self) {
-        // this function will discard tokens until we encounter a boundary 
-        // condition so that the parser can resume parsing the file at the 
+        // this function will discard tokens until we encounter a boundary
+        // condition so that the parser can resume parsing the file at the
         // next statement
         self.advance();
 

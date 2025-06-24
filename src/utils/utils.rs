@@ -28,7 +28,13 @@ pub fn define_ast(output_dir: &str, base_name: &str, types: Vec<&str>) -> Result
     writeln!(file, "pub trait Visitor<R> {{")?;
     for type_def in &types {
         let class_name = type_def.split(':').next().unwrap().trim();
-        writeln!(file, "    fn visit_{}_{}(&mut self, expr: &{}) -> R;", class_name.to_lowercase(), base_name.to_lowercase(), class_name)?;
+        writeln!(
+            file,
+            "    fn visit_{}_{}(&mut self, expr: &{}) -> R;",
+            class_name.to_lowercase(),
+            base_name.to_lowercase(),
+            class_name
+        )?;
     }
     writeln!(file, "}}\n")?;
 
@@ -42,11 +48,21 @@ pub fn define_ast(output_dir: &str, base_name: &str, types: Vec<&str>) -> Result
     writeln!(file, "}}\n")?;
 
     writeln!(file, "impl {} {{", base_name)?;
-    writeln!(file, "    pub fn accept<R>(&self, visitor: &mut dyn Visitor<R>) -> R {{")?;
+    writeln!(
+        file,
+        "    pub fn accept<R>(&self, visitor: &mut dyn Visitor<R>) -> R {{"
+    )?;
     writeln!(file, "        match self {{")?;
     for type_def in &types {
         let class_name = type_def.split(':').next().unwrap().trim();
-        writeln!(file, "            {}::{} {{ .. }} => visitor.visit_{}_{}(self),", base_name, class_name, class_name.to_lowercase(), base_name.to_lowercase())?;
+        writeln!(
+            file,
+            "            {}::{} {{ .. }} => visitor.visit_{}_{}(self),",
+            base_name,
+            class_name,
+            class_name.to_lowercase(),
+            base_name.to_lowercase()
+        )?;
     }
     writeln!(file, "        }}")?;
     writeln!(file, "    }}")?;

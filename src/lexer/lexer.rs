@@ -1,3 +1,4 @@
+use crate::{Evaluator, Parser};
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -30,6 +31,7 @@ pub static KEYWORDS: Lazy<HashMap<&'static str, TokenType>> = Lazy::new(|| {
 });
 
 static HAD_ERROR: AtomicBool = AtomicBool::new(false);
+static HAD_RUNTIMEERROR: AtomicBool = AtomicBool::new(false);
 
 pub fn run_file(path: &String) -> () {
     let bytes: Vec<u8> = fs::read(path).expect("Failed to read file");
@@ -38,6 +40,10 @@ pub fn run_file(path: &String) -> () {
 
     if HAD_ERROR.load(Ordering::Relaxed) {
         std::process::exit(65);
+    }
+
+    if HAD_RUNTIMEERROR.load(Ordering::Relaxed) {
+        std::process::exit(70);
     }
 }
 
@@ -65,8 +71,15 @@ fn run(source: &String) -> () {
     let mut scanner: Scanner = Scanner::new(source.to_string());
     let tokens: &Vec<Token> = scanner.scan_tokens();
 
-    for token in tokens {
-        println!("{}", token);
+    let mut parser = Parser::new(tokens.clone());
+    let expression = parser.parse();
+
+    if let Some(expr) = expression {
+        let mut evaluator = Evaluator;
+        match evaluator.evaluate(&expr) {
+            Ok(value) => println!("{:?}", value),
+            Err(error) => Evaluator::runtime_error(error),
+        }
     }
 }
 

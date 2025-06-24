@@ -2,7 +2,7 @@ use std::env;
 use crafting_interpreters::lexer::{run_file, run_prompt};
 use crafting_interpreters::lexer::{Token, TokenType};
 use crafting_interpreters::expr::Expr;
-use crafting_interpreters::{AstPrinter, Literal};
+use crafting_interpreters::{Literal};
 
 // fn main() {
 // 
