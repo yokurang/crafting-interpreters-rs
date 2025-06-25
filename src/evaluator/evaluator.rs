@@ -11,7 +11,7 @@ store a value of any (Lox) type and can even store values of different types at 
 
 use crate::lexer::{Literal, TokenType};
 use crate::parser::expr::{Expr, Visitor};
-use crate::{Stmt, StmtVisitor, Token};
+use crate::{Environment, Stmt, StmtVisitor, Token};
 use std::fmt;
 use std::fmt::Formatter;
 /*
@@ -22,7 +22,9 @@ it is important to distinguish between a literal, which is an input to the parse
 which is observed at runtime.
 */
 
-pub struct Evaluator;
+pub struct Evaluator {
+    environment: Environment
+}
 
 // representation of lox values at runtime
 #[derive(Debug, Clone)]
@@ -48,8 +50,8 @@ impl Visitor for Evaluator {
     // Previously, the scanner scanned the source code and packed literal values into a token.
     // The parser then took the token and packed it into an AST node.
     // // Now, we take the AST expression and unpack its value.
-    fn visit_literal_expr(&mut self, value: &Literal) -> Result<Value, RuntimeError> {
-        match value {
+    fn visit_literal_expr(&mut self, literal: &Literal) -> Result<Value, RuntimeError> {
+        match literal {
             Literal::Number(n) => Ok(Value::Number(*n)),
             Literal::Bool(true) => Ok(Value::Bool(true)),
             Literal::Bool(false) => Ok(Value::Bool(false)),
@@ -67,12 +69,12 @@ impl Visitor for Evaluator {
 
     // first we evaluate the expression embedded in the unary expression,
     // then we apply the unary token on the expression we evaluated
-    // finally we need a error handling mechanism to ensure that only unary
+    // finally we need an error handling mechanism to ensure that only unary
     // operators are valid
     // if we apply a minus, the subexpression has to be a number
     // we cast it before applying the operation, which happens at runtime
     // this is the essence of what makes the language dynamically typed
-    // the recursion is post-order traversal, i.e we evaluate the children first before the current node
+    // the recursion is post-order traversal, i,e. we evaluate the children first before the current node
     // pre-order traversal works on the parent first then the child
     // in-order traversal: left child -> parent -> right child
     // depth order traversal: breadth-first search
@@ -104,7 +106,7 @@ impl Visitor for Evaluator {
         right: &Expr,
     ) -> Result<Value, RuntimeError> {
         // a consequence of post-order traversal of AST is that we evaluate the left and right
-        // subexpressions first before applying the operantor. As a conseuqence, if there is
+        // subexpressions first before applying the operator. As a consequence, if there is
         // an error and our sub-expressions have side effects, they will be produced first before
         // raising a runtime error
         let value_left: Value = self.evaluate(left)?;
@@ -238,6 +240,10 @@ impl Visitor for Evaluator {
             }
         }
     }
+
+    fn visit_variable_expr(&mut self, token: &Token, _initializer: &Option<Box<Expr>>) -> Result<Value, RuntimeError> {
+        self.environment.get(token)
+    }
 }
 
 /*
@@ -277,6 +283,21 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
             Ok(())
         }
     }
+
+    fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+        if let Stmt::Var { name, initializer} = stmt {
+            let value = if let Some(expr) = initializer {
+                Some(self.evaluate(expr)?)
+            } else {
+                Some(Value::Nil)
+            };
+
+            self.environment.define(name.lexeme.clone(), value.unwrap());
+            Ok(())
+        } else {
+            unreachable!("Expected Var statement in visit_var_stmt")
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -305,13 +326,15 @@ impl std::error::Error for RuntimeError {}
 
 impl Evaluator {
     pub fn new() -> Self {
-        Self
+        Self {
+            environment: Environment::new()
+        }
     }
 
     pub fn evaluate(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         expr.accept(self)
     }
-    
+
     pub fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
         stmt.accept(self)
     }

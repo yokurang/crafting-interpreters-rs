@@ -18,6 +18,7 @@ fn main() -> Result<()> {
             "Grouping : Box<Expr> expression",
             "Literal  : LiteralValue value",
             "Unary    : Token operator, Box<Expr> right",
+            "Variable : Token name",
         ],
     )?;
 
@@ -27,6 +28,7 @@ fn main() -> Result<()> {
         vec![
             "Expression : Box<Expr> expression",
             "Print      : Box<Expr> expression",
+            "Var        : Token name, Box<Expr> initializer",
         ],
     )?;
 

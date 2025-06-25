@@ -1,6 +1,5 @@
 use crate::evaluator::{Evaluator};
 use crate::{runtime_error, Stmt};
-
 pub struct Interpreter;
 
 /*
@@ -15,7 +14,7 @@ confidence erodes.
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self 
+        Self
     }
     
     pub fn interpret(&self, statements: Vec<Stmt>) {

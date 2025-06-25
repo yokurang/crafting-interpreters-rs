@@ -1,7 +1,6 @@
 use crate::expr::Expr;
 use crate::lexer::Token;
 use crate::{report, Literal, Stmt, TokenType};
-
 /*
 The parser takes the tokens as input and produces an abstract syntax tree, a more information-rich
 data structure, as output. As a reminder, tokens are the output of the lexer, which takes raw
@@ -161,14 +160,57 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
-            match self.statement() {
+            match self.declaration() {
+                // since the `self.declaration` function is repeatedly called to process
+                // a sequence of statements, it is the perfect place to synchronize
                 Ok(stmt) => statements.push(stmt),
-                Err(_) => self.synchronize(), // Skip erroneous tokens
+                Err(error) => self.synchronize(),
             }
         }
-
         statements
     }
+
+    fn declaration(&mut self) -> Result<Stmt, ParseError> {
+        if self.match_tokens(&[TokenType::Var]) {
+            match self.var_declaration() {
+                Ok(stmt) => Ok(stmt),
+                Err(error) => panic!("Error in processing a variable declaration.")
+             }
+        } else {
+            self.statement()
+        }
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(TokenType::Identifier, "Expect variable name.")?;
+
+        let initializer = if self.match_tokens(&[TokenType::Equal]) {
+            Some(Box::new(self.expression()?))
+        } else {
+            // If no initializer, default to `nil`
+            None
+        };
+
+        self.consume(TokenType::SemiColon, "Expect ';' after variable declaration.")?;
+
+        Ok(Stmt::Var {
+            name,
+            initializer,
+        })
+    }
+
+    // pub fn parse(&mut self) -> Vec<Stmt> {
+    //     let mut statements = Vec::new();
+    //
+    //     while !self.is_at_end() {
+    //         match self.statement() {
+    //             Ok(stmt) => statements.push(stmt),
+    //             Err(_) => self.synchronize(), // Skip erroneous tokens
+    //         }
+    //     }
+    //
+    //     statements
+    // }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         if self.match_stmt(TokenType::Print) {
@@ -204,7 +246,7 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.assignment()
     }
 
     fn equality(&mut self) -> Result<Expr, ParseError> {
@@ -323,6 +365,13 @@ impl Parser {
                     .expect("TODO: panic message");
                 Ok(Expr::Grouping {
                     expression: Box::new(expr),
+                })
+            }
+
+            TokenType::Identifier => {
+                Ok(Expr::Variable {
+                    name: self.previous().clone(),
+                    initializer: None
                 })
             }
             _ => Err(Parser::error(self.peek(), "Expected an expression.")),
