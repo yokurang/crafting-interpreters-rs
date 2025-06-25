@@ -11,7 +11,7 @@ store a value of any (Lox) type and can even store values of different types at 
 
 use crate::lexer::{Literal, TokenType};
 use crate::parser::expr::{Expr, Visitor};
-use crate::Token;
+use crate::{Stmt, StmtVisitor, Token};
 use std::fmt;
 use std::fmt::Formatter;
 /*
@@ -31,6 +31,17 @@ pub enum Value {
     Bool(bool),
     String(String),
     Nil,
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Number(n) => write!(f, "{}", n),
+            Value::Bool(b) => write!(f, "{}", b),
+            Value::String(s) => write!(f, "{}", s),
+            Value::Nil => write!(f, "nil"),
+        }
+    }
 }
 
 impl Visitor for Evaluator {
@@ -245,6 +256,29 @@ but not exit the entire program.
 The tree-walk interpreter evaluates the AST using recursive calls.
 */
 
+impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
+    fn visit_expression_stmt(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+        if let Stmt::Expression { expression } = stmt {
+            let _ = self.evaluate(expression)?;
+        }
+        Ok(())
+    }
+
+    fn visit_print_stmt(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+        if let Stmt::Print { expression } = stmt {
+            match self.evaluate(expression) {
+                Ok(value) => {
+                    println!("{}", value);
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RuntimeError {
     pub token: Token,
@@ -276,6 +310,10 @@ impl Evaluator {
 
     pub fn evaluate(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         expr.accept(self)
+    }
+    
+    pub fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
+        stmt.accept(self)
     }
 
     pub fn check_number_operand(
@@ -333,9 +371,5 @@ impl Evaluator {
             (Value::String(s1), Value::String(s2)) => s1 == s2,
             _ => false,
         }
-    }
-
-    pub fn runtime_error(err: RuntimeError) {
-        eprintln!("[line {}] RuntimeError: {}", err.token.line, err.message);
     }
 }

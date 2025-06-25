@@ -1,13 +1,9 @@
-use crate::{Evaluator, Parser};
 use once_cell::sync::Lazy;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
-use std::fs;
-use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::vec::Vec;
+use crate::utils::{error};
 
 pub static KEYWORDS: Lazy<HashMap<&'static str, TokenType>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -30,78 +26,14 @@ pub static KEYWORDS: Lazy<HashMap<&'static str, TokenType>> = Lazy::new(|| {
     m
 });
 
-static HAD_ERROR: AtomicBool = AtomicBool::new(false);
-static HAD_RUNTIMEERROR: AtomicBool = AtomicBool::new(false);
-
-pub fn run_file(path: &String) -> () {
-    let bytes: Vec<u8> = fs::read(path).expect("Failed to read file");
-    let source: Cow<str> = String::from_utf8_lossy(&bytes);
-    run(&source.to_string());
-
-    if HAD_ERROR.load(Ordering::Relaxed) {
-        std::process::exit(65);
-    }
-
-    if HAD_RUNTIMEERROR.load(Ordering::Relaxed) {
-        std::process::exit(70);
-    }
-}
-
-pub fn run_prompt() -> () {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-
-    loop {
-        print!("> ");
-        stdout.flush().unwrap();
-
-        let mut line: String = String::new();
-        let bytes_read = stdin.read_line(&mut line).unwrap();
-
-        if bytes_read == 0 {
-            break; // EOF or Control-D
-        }
-
-        run(&line);
-        HAD_ERROR.store(false, Ordering::Relaxed);
-    }
-}
-
-fn run(source: &String) -> () {
-    let mut scanner: Scanner = Scanner::new(source.to_string());
-    let tokens: &Vec<Token> = scanner.scan_tokens();
-
-    let mut parser = Parser::new(tokens.clone());
-    let expression = parser.parse();
-
-    if let Some(expr) = expression {
-        let mut evaluator = Evaluator;
-        match evaluator.evaluate(&expr) {
-            Ok(value) => println!("{:?}", value),
-            Err(error) => Evaluator::runtime_error(error),
-        }
-    }
-}
-
-pub fn error(line: usize, message: &str) -> () {
-    report(line, "", message);
-}
-
-pub fn report(line: usize, location: &str, message: &str) -> () {
-    eprintln!("[line {} ] Error {} : {}", line, location, message);
-    HAD_ERROR.store(true, Ordering::Relaxed);
-}
-
 /*
 The scanner's job is to scan source code as a sequence of characters and group sequences of
 characters together into lexemes. Such lexemes are then evaluated into tokens for later analysis.
-*/
 
-/**
 Tokens are individual atoms in the molecule that is a programming language. Each lexeme is a sequence
 of characters, maps to a particular token. We need a token for every atomic structure of the programming language
 as per the language specification.
-**/
+*/
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
@@ -158,6 +90,12 @@ pub enum TokenType {
     Eof,
 }
 
+impl fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /*
 In error handling, this interpreter only keeps track of the line where the error occurred.
 In a more sophisticated programming language, it would also keep track of the column and length of the token.
@@ -188,12 +126,6 @@ impl Token {
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{} {} {:?}", self.token_type, self.lexeme, self.literal)
-    }
-}
-
-impl fmt::Display for TokenType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
     }
 }
 
@@ -238,14 +170,7 @@ impl Scanner {
         }
     }
 
-    // to consume input
-    fn advance(&mut self) -> char {
-        let ch = self.source[self.current..].chars().next().unwrap();
-        self.current += ch.len_utf8();
-        ch
-    }
-
-    fn scan_tokens(&mut self) -> &Vec<Token> {
+    pub fn scan_tokens(&mut self) -> &Vec<Token> {
         while !self.is_at_end() {
             self.start = self.current;
             self.scan_token();
@@ -257,6 +182,13 @@ impl Scanner {
             self.line,
         ));
         &self.tokens
+    }
+
+    // to consume input
+    fn advance(&mut self) -> char {
+        let ch = self.source[self.current..].chars().next().unwrap();
+        self.current += ch.len_utf8();
+        ch
     }
 
     // in scanning a token, if the token is a single character long, all we need to do is consume
@@ -352,7 +284,7 @@ impl Scanner {
         self.is_alpha(c) || self.is_digit(c)
     }
 
-    pub fn is_digit(&self, ch: char) -> bool {
+    fn is_digit(&self, ch: char) -> bool {
         ch >= '0' && ch <= '9'
     }
 

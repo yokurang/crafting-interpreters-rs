@@ -1,7 +1,11 @@
-// generate_ast.rs
 use std::fs::File;
 use std::io::{Result, Write};
 use std::path::Path;
+use std::sync::atomic::Ordering;
+use crate::runner::{HAD_ERROR};
+use crate::{RuntimeError, Value};
+
+// auto-generate types functions
 
 fn main() -> Result<()> {
     let output_dir = "./generated";
@@ -95,4 +99,29 @@ fn define_type(file: &mut File, class_name: &str, field_list: &str) {
         writeln!(file, "        {}: {},", field_name, field_type).expect("TODO: panic message");
     }
     writeln!(file, "    }},").expect("TODO: panic message");
+}
+
+// printing functions
+
+pub fn error(line: usize, message: &str) -> () {
+    report(line, "", message);
+}
+
+pub fn report(line: usize, location: &str, message: &str) -> () {
+    eprintln!("[line {} ] Error {} : {}", line, location, message);
+    HAD_ERROR.store(true, Ordering::Relaxed);
+}
+
+
+pub fn stringify(value: &Value) -> String {
+    match value {
+        Value::Nil => "nil".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+    }
+}
+
+pub fn runtime_error(err: RuntimeError) {
+    eprintln!("[line {}] RuntimeError: {}", err.token.line, err.message);
 }

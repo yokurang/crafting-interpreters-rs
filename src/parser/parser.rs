@@ -1,6 +1,7 @@
 use crate::expr::Expr;
 use crate::lexer::Token;
-use crate::{Literal, Stmt, TokenType};
+use crate::{report, Literal, Stmt, TokenType};
+
 /*
 The parser takes the tokens as input and produces an abstract syntax tree, a more information-rich
 data structure, as output. As a reminder, tokens are the output of the lexer, which takes raw
@@ -162,28 +163,45 @@ impl Parser {
         while !self.is_at_end() {
             match self.statement() {
                 Ok(stmt) => statements.push(stmt),
-                Err(_) => self.synchronize(), // Skip tokens until we're at a new statement
+                Err(_) => self.synchronize(), // Skip erroneous tokens
             }
         }
 
         statements
     }
-    
-    fn statement(&self) -> Stmt {
-        
+
+    fn statement(&mut self) -> Result<Stmt, ParseError> {
         if self.match_stmt(TokenType::Print) {
-            self.print_statement()
+            self.print_stmt()
+        } else {
+            self.expr_stmt()
         }
-        self.expression_stmt()
     }
 
-    // pub fn parse(&mut self) -> Option<Expr> {
-    //     match self.expression() {
-    //         Ok(expr) => Some(expr),
-    //         // what to do if a syntax error occurs?
-    //         Err(_) => None,
-    //     }
-    // }
+    fn match_stmt(&mut self, expected: TokenType) -> bool {
+        if self.check(&expected) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn print_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let value = self.expression()?; // Propagate error
+        self.consume(TokenType::SemiColon, "Expect ';' after value.")?;
+        Ok(Stmt::Print {
+            expression: Box::new(value),
+        })
+    }
+
+    fn expr_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let expr = self.expression()?; // Propagate error
+        self.consume(TokenType::SemiColon, "Expect ';' after value.")?;
+        Ok(Stmt::Expression {
+            expression: Box::new(expr),
+        })
+    }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
         self.equality()
@@ -339,10 +357,10 @@ impl Parser {
     fn error(token: &Token, message: &str) -> ParseError {
         match token.token_type {
             TokenType::Eof => {
-                crate::lexer::report(token.line, " at end", message);
+                report(token.line, " at end", message);
             }
             _ => {
-                crate::lexer::report(token.line, &format!(" at '{}'", token.lexeme), message);
+                report(token.line, &format!(" at '{}'", token.lexeme), message);
             }
         }
 
