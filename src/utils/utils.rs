@@ -3,7 +3,7 @@ use std::io::{Result, Write};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use crate::runner::{HAD_ERROR};
-use crate::{RuntimeError, Value};
+use crate::{RuntimeError, Token, Value};
 
 // auto-generate types functions
 

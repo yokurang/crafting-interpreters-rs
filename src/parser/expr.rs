@@ -14,6 +14,19 @@ pub trait Visitor {
     ) -> Result<Value, RuntimeError>;
     fn visit_variable_expr(&mut self, token: &Token, initializer: &Option<Box<Expr>>) -> Result<Value, RuntimeError>;
     fn visit_assign_expr(&mut self, token: &Token, value: &Expr) -> Result<Value, RuntimeError>;
+
+    fn visit_logical_expr(
+        &mut self,
+        left: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Value, RuntimeError>;
+    fn visit_call_expr(
+        &mut self,
+        callee: &Expr,
+        paren:  &Token,
+        arguments: &[Expr],
+    ) -> Result<Value, RuntimeError>;
 }
 
 pub enum Expr {
@@ -40,6 +53,16 @@ pub enum Expr {
         name: Token,
         value: Box<Expr>,
     },
+    Logical {
+        left: Box<Expr>,
+        operator: Token,
+        right: Box<Expr>,
+    },
+    Call {
+        callee: Box<Expr>,
+        paren: Token, // for error reporting
+        arguments: Vec<Expr>, // can be zero or more
+    },
 }
 
 impl Expr {
@@ -55,6 +78,16 @@ impl Expr {
             } => visitor.visit_binary_expr(&left, &operator, &right),
             Expr::Variable { name, initializer } => visitor.visit_variable_expr(name, initializer),
             Expr::Assign { name, value } => visitor.visit_assign_expr(name, value),
+            Expr::Logical {
+                left,
+                operator,
+                right,
+            } => visitor.visit_logical_expr(&left, &operator, &right),
+            Expr::Call {
+                callee,
+                paren,
+                arguments
+            } => visitor.visit_call_expr(callee, paren, arguments)
         }
     }
 }
