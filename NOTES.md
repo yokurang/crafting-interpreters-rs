@@ -86,3 +86,4 @@ All the expressions we have seen so far which evaluate to a value are called `r-
 
 We want the syntax tree to reflect that an `l-value` is not evaluated like a normal expression. That's why the `Expr.Assign` node has a token for the left-hand side, not an expression. The problem is that the parser does not know it is parsing an `l-value` until it hits the `=` operator.
 In a complex `l-value` expression, the parser may only notice several tokens later. This is becauase the receiver of an assignment can be an expression, and, technically, an expression can be infinitely long.
+
