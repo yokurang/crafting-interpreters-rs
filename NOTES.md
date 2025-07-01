@@ -270,4 +270,125 @@ A nicer solution is to have the benchmark script itself measure the time elapsed
 
 So we’ll add clock(), a native function that returns the number of seconds that have passed since some fixed point in time. The difference between two successive invocations tells you how much time elapsed between the two calls. This function is defined in the global scope, so let’s ensure the interpreter has access to that.
 
+Functions and variables here occupy the same namespace. In other languages, that may not be the case, i.e, they have separate namespaces.
+
+## Function Declarations
+
+We add a new production to the `declaration` rule we introduced back when we added
+variables. Function declarations, like variables, bind a new name. That means they are allowed
+only in places where a declaration is permitted.
+
+A named function declaration is not really a single primitive operation. It is syntactic sugar for creating
+a new function object, and binding that object to a new variable. If Lox had syntax
+for annonymous functions, we would not need function declaration statements.
+
+## Function Objects
+
+After parsing syntax, we are normally ready to interpret, but first we need
+to think about how to represent a lox function in Java. We need to keep track of the parameter list so that
+we can bind them to the argument list when the function is called. We also need
+to keep track of the function body for when the function is executed at runtime.
+
+That is what the Function class is for. However, we do not want how the interpreter evaluates to bleed into
+the syntax's frontend. For this reason, we wrap this class around a new class.
+
+## Return Statements
+
+Return statements are ways to return values out of the function to the callee.
+
+If Lox were an expression-oriented language like Ruby or Scheme, the body would be an expression whose value is implicitly the function’s result. But in Lox, the body of a function is a list of statements which don’t produce values, so we need dedicated syntax for emitting a result. In other words, return statements. I’m sure you can guess the grammar already.
+
+We’ve got one more—the final, in fact—production under the venerable statement rule. A return statement is the return keyword followed by an optional expression and terminated with a semicolon.
+
+The return value is optional to support exiting early from a function that doesn’t return a useful value. In statically typed languages, “void” functions don’t return a value and non-void ones do. Since Lox is dynamically typed, there are no true void functions. The compiler has no way of preventing you from taking the result value of a call to a function that doesn’t contain a return statement.
+
+This means every Lox function must return something, even if it contains no return statements at all. We use nil for this, which is why LoxFunction’s implementation of call() returns null at the end. In that same vein, if you omit the value in a return statement, we simply treat it as equivalent to:
+
+## Returning from Calls
+
+Interpreting a return statement is tricky. You can return from anywhere
+within the body of a function. When the return statement is executed, the interpreter
+needs to jump all the way out of whatever context it is currently in and cause
+the function call to complete, like some kind of control flow construct.
+
+For example
+
+```aiignore
+Interpreter.visitReturnStmt()
+Interpreter.visitIfStmt()
+Interpreter.executeBlock()
+Interpreter.visitBlockStmt()
+Interpreter.visitWhileStmt()
+Interpreter.executeBlock()
+LoxFunction.call()
+Interpreter.visitCallExpr()
+```
+
+We need to get from the top of the stack all the way back to `call()`. This seems like an exception to me.
+We will execute a return statement and use an exception to implement this and unwind
+the interpret past the visit methods of all of the containing statements back to the code that
+began executing the body.
+
+If we have a return value, we evaluate it. Otherwise, we use nil. 
+Then we take that value and wrap it around a custom exception class and throw it.
+The main advantage of this implementation is that we do need additional overhead from
+the stacktrace.
+
+This class wraps the return value with the accoutrement's Java requires for a runtime exception class. The weird super constructor call with those null and false arguments disables some JVM machinery that we don’t need. Since we’re using our exception class for control flow and not actual error handling, we don’t need overhead like stack traces.
+
+For the record, I’m not generally a fan of using exceptions for control flow. But inside a heavily recursive tree-walk interpreter, it’s the way to go. Since our own syntax tree evaluation is so heavily tied to the Java call stack, we’re pressed to do some heavyweight call stack manipulation occasionally, and exceptions are a handy tool for that.
+
+## Local Functions and Closures
+
+Reminder: Closure means that a function is able to remember and access its lexical scope, meaning
+the surrounding functions and variables, even after the outer function has finished executing.
+
+LoxFunction’s implementation of call() creates a new environment where it binds the function’s parameters. When I showed you that code, I glossed over one important point: What is the parent of that environment?
+
+Right now, it is always globals, the top-level global environment. That way, if an identifier isn’t defined inside the function body itself, the interpreter can look outside the function in the global scope to find it. In the Fibonacci example, that’s how the interpreter is able to look up the recursive call to fib inside the function’s own body—fib is a global variable.
+
+But recall that in Lox, function declarations are allowed anywhere a name can be bound. That includes the top level of a Lox script, but also the inside of blocks or other functions. Lox supports local functions that are defined inside another function, or nested inside a block.
+
+Local functions are functions that are defined inside another function or a block.
+
+```aiignore
+fun makeCounter() {
+  var i = 0;
+  fun count() {
+    i = i + 1;
+    print i;
+  }
+
+  return count;
+}
+
+var counter = makeCounter();
+counter(); // "1".
+counter(); // "2".
+```
+
+Here, count() uses i which is declared outside of itself in the containing function makeCounter. makeCounter
+returns a reference to the count() function and then its own body finishes executing completely.
+
+Meanwhile, the top-level code invokes the returned count() function. That executes
+the body of count(), which assigns to and reads i, even though the function where i is defined has already exited.
+
+If you have never encountered a language with nested functions before, this might seem crazy, but users
+do expect it to work. However, if you try to run it now, you will get an undefined variable error because the
+call to counter cannot find i since it is linked directly to the global environment, which does not have i.
+We lost the environment where i was defined.
+
+So at the point where the function is declared, we can see i. But when we return from makeCounter() and exit its body, the interpreter discards that environment. Since the interpreter doesn’t keep the environment surrounding count() around, it’s up to the function object itself to hang on to it.
+
+This data structure is called a closure because it “closes over” and holds on to the surrounding variables where the function is declared. Closures have been around since the early Lisp days, and language hackers have come up with all manner of ways to implement them. For jlox, we’ll do the simplest thing that works. In LoxFunction, we add a field to store an environment.
+
+The closure environment is a data structure that is active when the function is declared, not called.  It represents
+the lexical scope surrounding the function declaration. Finally, when we call
+the function, we use that environment as the call's parents instead of using the global environment.
+
+This creates an environment chain that goes from the function's body out through
+the environments where the function is declared, all the way to the global environment.
+
+The runtime environment chain matches the textual nesting of the source code.
+Now, as you can see, the interpreter can still find i when it needs to because it’s in the middle of the environment chain. Try running that makeCounter() example now. It works!
 

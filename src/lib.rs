@@ -13,3 +13,6 @@ pub use evaluator::*;
 pub use interpreter::*;
 pub use runner::*;
 pub use environment::*;
+
+pub mod function;
+pub use function::*;

@@ -177,12 +177,68 @@ impl Parser {
             match self.var_declaration() {
                 Ok(stmt) => Ok(stmt),
                 Err(error) => panic!("Error in processing a variable declaration.")
-             }
+            }
+        } else if self.match_tokens(&[TokenType::Fun]) {
+            match self.function() {
+                Ok(stmt) => Ok(stmt),
+                Err(error) => panic!("Error in processing a function.")
+            } 
         } else {
             self.statement()
         }
     }
 
+    fn function(&mut self) -> Result<Stmt, ParseError> {
+        // we can reuse this function later when processing class methods
+        // 1. Function name
+        let name = self.consume(TokenType::Identifier,
+                                "Expect function name.")?;
+        
+        // 2. Parameter list
+        self.consume(TokenType::LeftParen,
+                     "Expect '(' after function name.")?;
+
+        let mut params = Vec::new();
+        // the first if statement checks for the zero-parameter case
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                // the loop statement keeps parsing arguments as long as we can find 
+                // arguments separated by a comma
+                if params.len() >= 255 {
+                    // same error style as the book
+                    return Err(Parser::error(self.peek(), "Can't have more than 255 parameters."));
+                }
+
+                params.push(
+                    self.consume(TokenType::Identifier,
+                                 "Expect parameter name.")?
+                );
+
+                // no more parameters?
+                if !self.match_tokens(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenType::RightParen,
+                     "Expect ')' after parameters.")?;
+
+        // 3. Body
+        // consuming for a left brace here gives a more precise error message
+        // because we expect a left brace since we are expecting a body from a function declaration
+        self.consume(TokenType::LeftBrace,
+                     "Expect '{' before function body.")?;
+
+        // self.block() parses the braced statement list
+        let body = self.block();
+
+        Ok(Stmt::Function {
+            name,
+            params,
+            body,
+        })
+    }
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
         let name = self.consume(TokenType::Identifier, "Expect variable name.")?;
 
@@ -225,6 +281,8 @@ impl Parser {
             self.while_stmt()
         } else if self.match_stmt(TokenType::For) {
             self.for_stmt()
+        } else if self.match_stmt(TokenType::Return) {
+            self.return_statement()
         } else {
             self.expr_stmt()
         }
@@ -238,6 +296,30 @@ impl Parser {
             false
         }
     }
+
+    /*
+    Since an expression can start through a number of different tokens, 
+    it is difficult to tell if a return value is present. Instead, we check if it’s absent.
+    We check if the next token is a semicolon. If so, then it cannot be an expression,
+    and we return None.
+    */
+    fn return_statement(&mut self) -> Result<Stmt, ParseError> {
+        let keyword = self.previous().clone(); // capture the `return` token
+
+        let value = if !self.check(&TokenType::SemiColon) {
+            Some(Box::new(self.expression()?))
+        } else {
+            None
+        };
+
+        self.consume(TokenType::SemiColon, "Expect ';' after return value.")?;
+
+        Ok(Stmt::Return {
+            keyword,
+            value,
+        })
+    }
+
 
     fn print_stmt(&mut self) -> Result<Stmt, ParseError> {
         let value = self.expression()?; // Propagate error

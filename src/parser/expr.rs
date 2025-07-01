@@ -29,6 +29,7 @@ pub trait Visitor {
     ) -> Result<Value, RuntimeError>;
 }
 
+#[derive(Debug, Clone)]
 pub enum Expr {
     Binary {
         left: Box<Expr>,

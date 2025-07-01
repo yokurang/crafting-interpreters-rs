@@ -48,6 +48,6 @@ fn run(source: &String) -> () {
     let mut parser = Parser::new(tokens.clone());
     let statements = parser.parse();
 
-    let interpreter = Interpreter::new();
+    let mut interpreter = Interpreter::new();
     interpreter.interpret(statements);
 }

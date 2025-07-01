@@ -115,5 +115,12 @@ pub fn report(line: usize, location: &str, message: &str) -> () {
 }
 
 pub fn runtime_error(err: RuntimeError) {
-    eprintln!("[line {}] RuntimeError: {}", err.token.line, err.message);
+    match err {
+        RuntimeError::Error { token, message } => {
+            eprintln!("[line {}] RuntimeError at '{}': {}", token.line, token.lexeme, message);
+        }
+        RuntimeError::Return(_) => {
+            // Do nothing – returns are not actual runtime errors
+        }
+    }
 }

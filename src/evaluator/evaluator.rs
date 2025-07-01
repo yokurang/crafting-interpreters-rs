@@ -11,7 +11,7 @@ store a value of any (Lox) type and can even store values of different types at 
 
 use crate::lexer::{Literal, TokenType};
 use crate::parser::expr::{Expr, Visitor};
-use crate::{Environment, Stmt, StmtVisitor, Token};
+use crate::{Environment, LoxFunction, Stmt, StmtVisitor, Token};
 use std::fmt;
 use std::fmt::Formatter;
 use std::rc::Rc;
@@ -24,7 +24,7 @@ which is observed at runtime.
 */
 
 pub struct Evaluator {
-    environment: Environment
+    pub environment: Environment
 }
 
 // representation of lox values at runtime
@@ -63,6 +63,12 @@ impl LoxCallable for ClockFn {
             .unwrap()
             .as_secs_f64();
         Ok(Value::Number(secs))
+    }
+}
+
+impl fmt::Display for ClockFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<native fn>")
     }
 }
 
@@ -446,36 +452,88 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
         }
         Ok(())
     }
+
+    fn visit_fun_stmt(&mut self, name: &Token, params: &Vec<Token>, body: &Vec<Stmt>) -> Result<(), RuntimeError> {
+        /*
+        This is similar to how we interpret other literal expressions. We take a function
+        syntax node, a compile-time representation of the function - and convert it to a runtime
+        representation of the code. HEre, that's a LoxFunction that wraps the syntax node.
+        
+        Function declarations are different from other literal nodes in that the
+        declaration also binds the resulting object to a new variable. So, after creating the
+        LoxFunction, we create a new binding in the current environment and
+        store a reference to it there.
+        */
+        let func_decl = Stmt::Function {
+            name: name.clone(),
+            params: params.clone(),
+            body: body.clone(),
+        };
+
+
+        let closure: Rc<Environment> = Rc::from(self.environment.clone());
+
+        // wrap it into a callable object
+        let function_obj = Value::Callable(Rc::new(LoxFunction::new(func_decl, closure)));
+
+        // define the variable in the *current* environment
+        self.environment.define(name.lexeme.clone(), function_obj);
+
+
+        Ok(())
+    }
+
+    fn visit_return_stmt(&mut self, _keyword: &Token, value: &Option<Box<Expr>>) -> Result<(), RuntimeError> {
+        let result = if let Some(expr) = value {
+            Some(self.evaluate(expr)?)
+        } else {
+            None
+        };
+
+        // Propagate the return using a special error or control signal
+        Err(RuntimeError::Return(result))
+    }
 }
 
 #[derive(Debug)]
-pub struct RuntimeError {
-    pub token: Token,
-    pub message: String,
+pub enum RuntimeError {
+    Error {
+        token: Token,
+        message: String,
+    },
+    Return(Option<Value>),
 }
 
 impl RuntimeError {
     pub fn new(token: Token, message: String) -> Self {
-        Self { token, message }
+        RuntimeError::Error { token, message }
     }
 }
 
-impl fmt::Display for RuntimeError {
+use std::fmt::{Display};
+
+impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[line {}] RuntimeError at '{}': {}",
-            self.token.line, self.token.lexeme, self.message
-        )
+        match self {
+            RuntimeError::Error { token, message } => {
+                write!(
+                    f,
+                    "[line {}] RuntimeError at '{}': {}",
+                    token.line, token.lexeme, message
+                )
+            }
+            RuntimeError::Return(_) => write!(f, "<return control flow>"),
+        }
     }
 }
 
 impl std::error::Error for RuntimeError {}
 
+
 impl Evaluator {
-    pub fn new() -> Self {
+    pub fn new(environment: Environment) -> Self {
         Self {
-            environment: Environment::new_global()
+            environment
         }
     }
 
@@ -494,7 +552,7 @@ impl Evaluator {
     
     You don't have to restore the old environment since it lives in the Java stack environment.
     */
-    fn execute_block(
+    pub(crate) fn execute_block(
         &mut self,
         statements: &[Stmt],
         new_env: Environment,

@@ -18,11 +18,24 @@ pub trait StmtVisitor<R> {
         condition: &Expr,
         body: &Stmt,
     ) -> R;
+    fn visit_fun_stmt(
+        &mut self,
+        name: &Token,
+        params: &Vec<Token>,
+        body: &Vec<Stmt>
+    ) -> R;
+    fn visit_return_stmt(&mut self, keyword: &Token, value: &Option<Box<Expr>>) -> R;
 }
 
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expression {
         expression: Box<Expr>,
+    },
+    Function {
+      name: Token,
+        params: Vec<Token>,
+        body: Vec<Stmt>,
     },
     If {
         /*
@@ -46,6 +59,9 @@ pub enum Stmt {
     Print {
         expression: Box<Expr>,
     },
+    Return {
+        keyword: Token, value: Option<Box<Expr>>,
+    },
     Var {
         name: Token,
         initializer: Option<Box<Expr>>,
@@ -66,7 +82,11 @@ impl Stmt {
             Stmt::Var { .. } => visitor.visit_var_stmt(self),
             Stmt::Block { statements } => visitor.visit_block_stmt(statements),
             Stmt::If { conditional, consequent, alternative } => visitor.visit_if_stmt(conditional, consequent, alternative),
-            Stmt::While {condition, body} => visitor.visit_while_stmt(condition, body)
+            Stmt::While {condition, body} => visitor.visit_while_stmt(condition, body),
+            Stmt::Function {
+                name, params, body
+            } => visitor.visit_fun_stmt(name, params, body),
+            Stmt::Return {keyword, value} => visitor.visit_return_stmt(keyword, value),
         }
     }
 }
