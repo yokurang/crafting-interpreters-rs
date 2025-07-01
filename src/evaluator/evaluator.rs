@@ -99,6 +99,39 @@ impl Visitor for Evaluator {
         }
     }
 
+    fn visit_logical_expr(
+        &mut self,
+        left: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Value, RuntimeError> {
+        let left_val = self.evaluate(left)?;
+
+        match operator.token_type {
+            TokenType::Or => {
+                // short-circuit when the left side is truthy
+                if self.is_truthy(&left_val) {
+                    return Ok(left_val);
+                }
+            }
+            TokenType::And => {
+                // short-circuit when the left side is falsy
+                if !self.is_truthy(&left_val) {
+                    return Ok(left_val);
+                }
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    operator.clone(),
+                    "Unknown logical operator.".to_string(),
+                ))
+            }
+        }
+
+        // need the right-hand side value
+        self.evaluate(right)
+    }
+
     fn visit_binary_expr(
         &mut self,
         left: &Expr,
@@ -244,6 +277,12 @@ impl Visitor for Evaluator {
     fn visit_variable_expr(&mut self, token: &Token, _initializer: &Option<Box<Expr>>) -> Result<Value, RuntimeError> {
         self.environment.get(token)
     }
+
+    fn visit_assign_expr(&mut self, token: &Token, value: &Expr) -> Result<Value, RuntimeError> {
+        let value = self.evaluate(value)?;
+        self.environment.assign(&token, value.clone())?;
+        Ok(value)
+    }
 }
 
 /*
@@ -298,6 +337,35 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
             unreachable!("Expected Var statement in visit_var_stmt")
         }
     }
+
+    fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) -> Result<(), RuntimeError> {
+        while {
+            let cond_val = self.evaluate(condition)?;
+            self.is_truthy(&cond_val)
+        } {
+            self.execute(body)?;
+        }
+        Ok(())
+    }
+
+    // the part which makes control flow special is the if statement. All other expressions
+    // evaluate their subexpressions by recursion or by calling some other method.
+    fn visit_if_stmt(&mut self, condition: &Expr, then_branch: &Stmt, else_branch: &Option<Box<Stmt>>) -> Result<(), RuntimeError> {
+        let cond_val = self.evaluate(condition)?;
+
+        if self.is_truthy(&cond_val) {
+            self.execute(then_branch)?;
+        } else if let Some(else_stmt) = else_branch {
+            self.execute(else_stmt)?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_block_stmt(&mut self, statements: &Vec<Stmt>) -> Result<(), RuntimeError> {
+        let child_env = Environment::new_enclosed(self.environment.clone());
+        self.execute_block(statements, child_env)
+    }
 }
 
 #[derive(Debug)]
@@ -327,7 +395,7 @@ impl std::error::Error for RuntimeError {}
 impl Evaluator {
     pub fn new() -> Self {
         Self {
-            environment: Environment::new()
+            environment: Environment::new_global()
         }
     }
 
@@ -337,6 +405,35 @@ impl Evaluator {
 
     pub fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
         stmt.accept(self)
+    }
+
+    /*
+    Manually changing and restoring a mutable environment field feels inelegant. Another
+    classic approach is to explicitly pass the environment as a parameter to each visit method.
+    To `change` the environment, you pass a different one as you recurse down the tree.
+    
+    You don't have to restore the old environment since it lives in the Java stack environment.
+    */
+    fn execute_block(
+        &mut self,
+        statements: &[Stmt],
+        new_env: Environment,
+    ) -> Result<(), RuntimeError> {
+        // Swap current and new environments.
+        // `old_env` now owns the previous scope, so we can restore it later.
+        let old_env = std::mem::replace(&mut self.environment, new_env);
+
+        // Ensure the previous environment is restored even on early return or error.
+        let result = (|| {
+            for stmt in statements {
+                self.execute(stmt)?;
+            }
+            Ok(())
+        })();
+
+        // put the original environment back
+        self.environment = old_env;
+        result
     }
 
     pub fn check_number_operand(

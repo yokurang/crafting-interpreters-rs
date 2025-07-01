@@ -6,11 +6,42 @@ pub trait StmtVisitor<R> {
     fn visit_expression_stmt(&mut self, expr: &Stmt) -> R;
     fn visit_print_stmt(&mut self, expr: &Stmt) -> R;
     fn visit_var_stmt(&mut self, expr: &Stmt) -> R;
+    fn visit_block_stmt(&mut self, statements: &Vec<Stmt>) -> R;
+    fn visit_if_stmt(
+        &mut self,
+        condition: &Expr,
+        then_branch: &Stmt,
+        else_branch: &Option<Box<Stmt>>,
+    ) -> R;
+    fn visit_while_stmt(
+        &mut self,
+        condition: &Expr,
+        body: &Stmt,
+    ) -> R;
 }
 
 pub enum Stmt {
     Expression {
         expression: Box<Expr>,
+    },
+    If {
+        /*
+        Consider this example: if (first) if (second) whenTrue(); else whenFalse();
+        When languages have an optional else statement, the grammar becomes ambiguous. This pitfall is called
+        the dangling else problem.
+
+        It is possible to define a context-free grammar that avoids the ambiguity directly. However, it requires
+        splitting most of the statement rules into pairs, one that allows an else statement and one pair
+        that does not allow an else statement. Instead, most parsers and languages avoid the problem in an ad-hoc way.
+        No matter what hack they use to get themselves out of trouble, they always choose the same interpretation - the else
+        is bound to the nearest if that precedes it.
+        
+        Our parser conveniently does that already. Since the `if_statement()` eagerly looks for an else before returning,
+        the innermost call to a nested series will claim the else statement clause before returning to the outer if statements.
+        
+        */
+      conditional: Box<Expr>, consequent: Box<Stmt>, alternative: Option<Box<Stmt>>,
+        
     },
     Print {
         expression: Box<Expr>,
@@ -18,6 +49,12 @@ pub enum Stmt {
     Var {
         name: Token,
         initializer: Option<Box<Expr>>,
+    },
+    Block {
+        statements: Vec<Stmt>,
+    },
+    While {
+        condition: Box<Expr>, body: Box<Stmt>,
     },
 }
 
@@ -27,6 +64,9 @@ impl Stmt {
             Stmt::Expression { .. } => visitor.visit_expression_stmt(self),
             Stmt::Print { .. } => visitor.visit_print_stmt(self),
             Stmt::Var { .. } => visitor.visit_var_stmt(self),
+            Stmt::Block { statements } => visitor.visit_block_stmt(statements),
+            Stmt::If { conditional, consequent, alternative } => visitor.visit_if_stmt(conditional, consequent, alternative),
+            Stmt::While {condition, body} => visitor.visit_while_stmt(condition, body)
         }
     }
 }
