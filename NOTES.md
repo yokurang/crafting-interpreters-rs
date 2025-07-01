@@ -217,3 +217,57 @@ This rule requires at least one argument expression, followed by zero or more ot
 the entire `arguments` production to be optional. 
 In a complex `l-value` expression, the parser may only notice several tokens later. This is becauase the receiver of an assignment can be an expression, and, technically, an expression can be infinitely long.
 
+### Callable Objects
+
+Before implementing LoxCallable, we need to make the visit method more robust. It currently
+ignores a couple of failure modes that we cannot pretend will not occur. First, what happens if the callee is not actually
+something you can call? For example `"test"();`
+
+Strings are not callable in Lox, The runtime representation of a Lox string is a Java string, so when
+we cast that to LoxCallable,, the JVM will throw a ClassCastException. We do not want our interpreter
+to vomit out some nasty Java stack trace and die. Instead, we need to check
+the type ourselves first.
+
+We still throw an exception, but now we’re throwing our own exception type, one that the interpreter knows to catch and report gracefully.
+
+### Checking Arity
+
+The other problem relates to the function's arity. Arity is the fancy
+term for the number of arguments a function or operations expect. Unary operators have arity one,
+binary operators have arity two, etc. With functions, the arity is determined by the number
+of parameters it declares. 
+
+Different languages take different approaches to the problem of a function being supplied the wrong number
+of arity. Of course, most statically typed languages check this at compile time nad refuse to compile
+the code if the argument count does not match the function's arity. JavaScript discords
+any extra arguments you pass. If you do not pass enough, it fills in the missing parameters
+with `undefined`, a value that represents null but also not really. Python is stricter. It raises
+a runtime error if the argument list is too short or too long. 
+
+I think the latter is a better approach. Passing the wrong number of arguments is almost always a bug, and it’s a mistake I do make in practice. Given that, the sooner the implementation draws my attention to it, the better. So for Lox, we’ll take Python’s approach. Before invoking the callable, we check to see if the argument list’s length matches the callable’s arity.
+
+That requires a new method on the LoxCallable interface to ask it its arity.
+
+We could push the arity checking into the concrete implementation of call(). But, since we’ll have multiple classes implementing LoxCallable, that would end up with redundant validation spread across a few classes. Hoisting it up into the visit method lets us do it in one place.
+
+## Native Functions
+
+We can theoretically call functions, but we have no functions to call yet. Before we get to user-defined functions, now is a good time to introduce a vital but often overlooked facet of language implementations—native functions. These are functions that the interpreter exposes to user code but that are implemented in the host language (in our case Java), not the language being implemented (Lox).
+
+Sometimes these are called primitives, external functions, or foreign functions. Since these functions can be called while the user’s program is running, they form part of the implementation’s runtime. A lot of programming language books gloss over these because they aren’t conceptually interesting. They’re mostly grunt work.
+
+But when it comes to making your language actually good at doing useful stuff, the native functions your implementation provides are key. They provide access to the fundamental services that all programs are defined in terms of. If you don’t provide native functions to access the file system, a user’s going to have a hell of a time writing a program that reads and displays a file.
+
+Many languages also allow users to provide their own native functions. The mechanism for doing so is called a foreign function interface (FFI), native extension, native interface, or something along those lines. These are nice because they free the language implementer from providing access to every single capability the underlying platform supports. We won’t define an FFI for jlox, but we will add one native function to give you an idea of what it looks like.
+
+## Telling Time
+
+When we get to Part III and start working on a much more efficient implementation of Lox, we’re going to care deeply about performance. Performance work requires measurement, and that in turn means benchmarks. These are programs that measure the time it takes to exercise some corner of the interpreter.
+
+We could measure the time it takes to start up the interpreter, run the benchmark, and exit, but that adds a lot of overhead—JVM startup time, OS shenanigans, etc. That stuff does matter, of course, but if you’re just trying to validate an optimization to some piece of the interpreter, you don’t want that overhead obscuring your results.
+
+A nicer solution is to have the benchmark script itself measure the time elapsed between two points in the code. To do that, a Lox program needs to be able to tell time. There’s no way to do that now—you can’t implement a useful clock “from scratch” without access to the underlying clock on the computer.
+
+So we’ll add clock(), a native function that returns the number of seconds that have passed since some fixed point in time. The difference between two successive invocations tells you how much time elapsed between the two calls. This function is defined in the global scope, so let’s ensure the interpreter has access to that.
+
+

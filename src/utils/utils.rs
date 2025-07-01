@@ -114,16 +114,6 @@ pub fn report(line: usize, location: &str, message: &str) -> () {
     HAD_ERROR.store(true, Ordering::Relaxed);
 }
 
-
-pub fn stringify(value: &Value) -> String {
-    match value {
-        Value::Nil => "nil".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => s.clone(),
-    }
-}
-
 pub fn runtime_error(err: RuntimeError) {
     eprintln!("[line {}] RuntimeError: {}", err.token.line, err.message);
 }

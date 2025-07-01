@@ -14,6 +14,7 @@ use crate::parser::expr::{Expr, Visitor};
 use crate::{Environment, Stmt, StmtVisitor, Token};
 use std::fmt;
 use std::fmt::Formatter;
+use std::rc::Rc;
 /*
 A literal is a bit of syntax that produces a value. Literals are the atomic bits that
 compose a syntax. A literal comes from the parser's input. This is an important distinction,
@@ -33,6 +34,36 @@ pub enum Value {
     Bool(bool),
     String(String),
     Nil,
+    Callable(Rc<dyn LoxCallable>),
+}
+
+pub trait LoxCallable: std::fmt::Debug {
+    fn arity(&self) -> usize;
+    fn call(
+        &self,
+        interpreter: &mut Evaluator,
+        arguments: Vec<Value>,
+    ) -> Result<Value, RuntimeError>;
+}
+
+#[derive(Debug)]
+pub struct ClockFn;
+
+impl LoxCallable for ClockFn {
+    fn arity(&self) -> usize { 0 }
+
+    fn call(
+        &self,
+        _interpreter: &mut Evaluator,
+        _arguments: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        Ok(Value::Number(secs))
+    }
 }
 
 impl fmt::Display for Value {
@@ -42,6 +73,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::String(s) => write!(f, "{}", s),
             Value::Nil => write!(f, "nil"),
+            Value::Callable(_) => write!(f, "<fn>"),
         }
     }
 }
@@ -97,39 +129,6 @@ impl Visitor for Evaluator {
                 "Unknown unary operator.".parse().unwrap(),
             )),
         }
-    }
-
-    fn visit_logical_expr(
-        &mut self,
-        left: &Expr,
-        operator: &Token,
-        right: &Expr,
-    ) -> Result<Value, RuntimeError> {
-        let left_val = self.evaluate(left)?;
-
-        match operator.token_type {
-            TokenType::Or => {
-                // short-circuit when the left side is truthy
-                if self.is_truthy(&left_val) {
-                    return Ok(left_val);
-                }
-            }
-            TokenType::And => {
-                // short-circuit when the left side is falsy
-                if !self.is_truthy(&left_val) {
-                    return Ok(left_val);
-                }
-            }
-            _ => {
-                return Err(RuntimeError::new(
-                    operator.clone(),
-                    "Unknown logical operator.".to_string(),
-                ))
-            }
-        }
-
-        // need the right-hand side value
-        self.evaluate(right)
     }
 
     fn visit_binary_expr(
@@ -283,6 +282,87 @@ impl Visitor for Evaluator {
         self.environment.assign(&token, value.clone())?;
         Ok(value)
     }
+
+    fn visit_logical_expr(
+        &mut self,
+        left: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Value, RuntimeError> {
+        let left_val = self.evaluate(left)?;
+
+        match operator.token_type {
+            TokenType::Or => {
+                // short-circuit when the left side is truthy
+                if self.is_truthy(&left_val) {
+                    return Ok(left_val);
+                }
+            }
+            TokenType::And => {
+                // short-circuit when the left side is falsy
+                if !self.is_truthy(&left_val) {
+                    return Ok(left_val);
+                }
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    operator.clone(),
+                    "Unknown logical operator.".to_string(),
+                ))
+            }
+        }
+
+        // need the right-hand side value
+        self.evaluate(right)
+    }
+
+    fn visit_call_expr(&mut self, callee: &Expr, paren: &Token, arguments: &[Expr]) -> Result<Value, RuntimeError> {
+        /*
+        First, we evaluate the expression for the callee. Typically, this
+        expression is just an identifier that looks up the expression by name, but it could
+        be anything. We evaluate each of the argument expressions in order and store
+        the resulting values in a list.
+        */
+        let callee_val = self.evaluate(callee)?;
+
+        // 2. Evaluate each argument
+        let mut arg_vals = Vec::with_capacity(arguments.len());
+        for arg in arguments {
+            arg_vals.push(self.evaluate(arg)?);
+        }
+
+        /* performing the call
+        We do that by casting the callee to a LoxCallable and then
+        invoking a `call()` method on it. The Java representation of any Lox
+        object thay can be called like a function implement this interface.
+        This includes user-defined functions and also class objects since classes are
+        'called' to construct new instances. 
+        */
+
+        // 3. Check that the callee is actually callable
+        match callee_val {
+            Value::Callable(ref function) => {
+                // 3a. Arity check (optional but nice to keep the book’s behaviour)
+                if arg_vals.len() != function.arity() {
+                    return Err(RuntimeError::new(
+                        paren.clone(),
+                        format!(
+                            "Expected {} arguments but got {}.",
+                            function.arity(),
+                            arg_vals.len()
+                        ),
+                    ));
+                }
+                // 3b. Make the call
+                function.call(self, arg_vals)
+            }
+
+            _ => Err(RuntimeError::new(
+                paren.clone(),
+                "Can only call functions and classes.".to_string(),
+            )),
+        }
+    }
 }
 
 /*
@@ -338,14 +418,9 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
         }
     }
 
-    fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) -> Result<(), RuntimeError> {
-        while {
-            let cond_val = self.evaluate(condition)?;
-            self.is_truthy(&cond_val)
-        } {
-            self.execute(body)?;
-        }
-        Ok(())
+    fn visit_block_stmt(&mut self, statements: &Vec<Stmt>) -> Result<(), RuntimeError> {
+        let child_env = Environment::new_enclosed(self.environment.clone());
+        self.execute_block(statements, child_env)
     }
 
     // the part which makes control flow special is the if statement. All other expressions
@@ -362,9 +437,14 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
         Ok(())
     }
 
-    fn visit_block_stmt(&mut self, statements: &Vec<Stmt>) -> Result<(), RuntimeError> {
-        let child_env = Environment::new_enclosed(self.environment.clone());
-        self.execute_block(statements, child_env)
+    fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) -> Result<(), RuntimeError> {
+        while {
+            let cond_val = self.evaluate(condition)?;
+            self.is_truthy(&cond_val)
+        } {
+            self.execute(body)?;
+        }
+        Ok(())
     }
 }
 
