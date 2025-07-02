@@ -392,3 +392,247 @@ the environments where the function is declared, all the way to the global envir
 The runtime environment chain matches the textual nesting of the source code.
 Now, as you can see, the interpreter can still find i when it needs to because it’s in the middle of the environment chain. Try running that makeCounter() example now. It works!
 
+# Resolving and Binding
+
+In designing a language or a program, correctness is extremely important, and we must ensure
+correctness in the context of semantics. Semantic analysis is the process of analyzing the user's source code
+and extracting the meaning behind that source code without running the code.    =
+
+## Static Scope
+
+Lexical scoping: The scope of a variable is determined by its position in the source code during compilation.
+
+A variable's value refers to the most recent declaration of the variable in the innermost environment enclosing the expression
+using the variable.
+
+In straight line code, the declaration preceding in text will also precede the usage in time. 
+However, that is not always true. Functions may defer a chunk of code such that
+its dynamic temporal execution no longer mirrors the static textual ordering.
+
+## Scopes and Mutable Environments
+
+In the interpreter, environments are the dynamic manifestation of static scopes.The two
+mostly stay in sync with each other-we create a new environment when we enter a new scope, and discard
+it when we leave the scope. There is one other operation we perform on environments: binding a variable
+in one.
+
+When we have a function and call that function, we get a new environment for the body of the function. The function has closure, which means it captures
+the environment where the function was declared.
+
+The interpreter dynamically creates a new environment for the function body. It is empty since
+the function does not declare any variables. The parent of that environment is the function's closure-the outer block environment enclosing the function.
+
+Inside the body of the function, we print the value of a. The interpreter looks up this value by walking
+the chain of environments. It gets all the way to the global environment before finding it there and printing
+"global." 
+
+I chose to implement environments in a way that I hoped would agree with your informal intuition around scopes. We tend to consider all of the code within a block as being within the same scope, so our interpreter uses a single environment to represent that. Each environment is a mutable hash table. When a new local variable is declared, it gets added to the existing environment for that scope.
+
+```aiignore
+{
+  var a;
+  // 1.
+  var b;
+  // 2.
+}
+```
+
+At the first marked line, only a is in scope. At the second line, both a and b are. If you define a “scope” to be a set of declarations, then those are clearly not the same scope—they don’t contain the same declarations. It’s like each var statement splits the block into two separate scopes, the scope before the variable is declared and the one after, which includes the new variable.
+
+But in our implementation, environments do act like the entire block is one scope, just a scope that changes over time. Closures do not like that. When a function is declared, it captures a reference to the current environment. The function should capture a frozen snapshot of the environment as it existed at the moment the function was declared. But instead, in the Java code, it has a reference to the actual mutable environment object. When a variable is later declared in the scope that environment corresponds to, the closure sees the new variable, even though the declaration does not precede the function.
+
+TLDR: Closures should capture a frozen snapshot of the environment at the time the function was created. A function should not be able to see
+the environment as it evolves over time, i.e, cannot access variables which are declared or re-defined after the function was created.
+
+## Persistent Environments
+
+There is a style of programming that uses persistent data structures. Persistent data structures can
+never be directly modified. They are also called immutable. Instead, any "modification" to an
+existing structure produces a new object that contains all of the original data and the new modification.
+The original is left unchanged.
+
+If we were to apply that technique to the environment, then every time you declared a variable it would
+return a new environment that contained all of the previously declared variables along with the one with the
+new name. Declaring a variable would do the implicit "split" where you have an environment before
+and after the variable declaration. 
+
+A closure retains a reference to the environment instance in play when the function was declared. Since any
+declarations in that block would produce a new environment object, the closure would not see the new
+variables and the bug would be fixed.
+
+This is a legit way to solve the problem.
+However, instead of making the data structure static,
+we will bake the static resolution into the access operation itself.
+
+## Semantic Analysis
+
+An interpreter resolves a variable-tracks down which declaration the variable refers to-each time a variable is evaluated. 
+If a variable is in a loop and is evaluated 1000 times, then the interpreter resolves it 1000 times.
+
+We know static scope means that a variable usage always resolves to the same declaration.
+Given that, why are we doing it dynamically every time? Doing so doesn’t just open the hole that leads to our annoying bug, it’s also needlessly slow.
+
+A better solution is to resolve each variable use once. Write a chunk of code
+that inspects the user's program, finds every variable mentioned, and figures out which declaration each
+refers to. This process is an example of a semantic analysis. Where a parser tells only if a program
+is grammatically correct (a syntactic analysis), semantic analysis goes farther and starts to figure out
+what pieces of the program actually mean. In this case, our analysis will resolve variable bingings. We will know
+that an expression is a variable and which variable it is.
+
+There are a lot of ways we could store the binding between a variable and its
+declaration. We will store the resolution in a way that makes the most of the
+existing environment class. In the first (correct) evaluation, we look at three environments in the chain before finding the global declaration of a. Then, when the inner a is later declared in a block scope, it shadows the global one.
+
+The next lookup walks the chain, finds a in the second environment and stops there. Each environment corresponds to a single lexical scope where variables are declared. If we could ensure a variable lookup always walked the same number of links in the environment chain, that would ensure that it found the same variable in the same scope every time.
+
+To resolve a variable iusage, we only need to calculate how many jumps awayu the declared variable
+will be in the environment chain. The interesting question ius when to do this calculation.
+
+Since we are calculating a static property based on the source code, implement in the parser. That is the traditional home, and is where we’ll put it later in clox. It would work here too, but I want an excuse to show you another technique. We’ll write our resolver as a separate pass.
+
+## A Variable Resolution Pass
+
+After the parser produces these syntax treee, but before the interpreter starts executing it, we will doa  single
+walk over the syntax tree to resolve all of the variables it contains. Additional passes between parsing 
+and execution are common. If Lox had static types, we could slide a type checkeer. Optimizations
+are often implemented in separate passes like this too. Basically, any work that does not rely on state
+that is only available is done this way. 
+
+The variable resolution pass works like a short of mini-interpreter. It walks the tree, visiting
+each node, but a static analysis is different from dynamic execution:
+
+1. There are no side effects. When the static analysis visits a print statement, it does not print anything. Calls
+to native functions or other operations that reach the standard out buffer are stubbed and have no effect.
+2. There is no control flow. Loops are visited only once. Both branches are visited in if statements. Logic operators are not short-circuited.
+
+## Resolving Variable Expressions
+
+Variable declarations-and function declarations, which we will get to-write to the scope maps.
+Those maps are read when we resolve variable expressions. 
+
+## Resolving Assignment Expressions
+
+The other expression that references a variable is an assignment. We first resolve the expression 
+in the assignment in case that expression contains other variables that need to be resolved. We then resolve the variable being assigned to.
+
+## Resolving Function Declarations
+
+Finally, functions. Functions ind both names and introduce a scope. The name of the function
+itself is bound in the surrounding scope where the function is declared. Wehn we step into
+the function's body, we bind its parameters to the inner scope of that function.
+
+We first declare and define the name of the function in the current scope. Unlike variables, we define the name eargerly,
+before resolving the function's body. This lets a function recursively refer to itself in its own body. 
+
+Then we resolve the function's body. It is a separate method since we will now use it for resolving lox methods when we add classes later. 
+It creates a new scope for the bodt and then binds the parameters into that inner-most scope in the function's body.
+
+Once that is ready, it resolves the function's body in that scope. This is different from how
+the interpreter handles function declarations. At runtime, declaring a function does not do anything with the function's body. 
+The body does not get touched until later when the function is called. In static analysis, we immediately
+traverse into the function's body right then and there. 
+
+## Resolving Other Syntax Tree Nodes
+
+That covers the interesting corners of the grammars. We handle every place where
+a variable is declared, read, or written, and every place where a scope is created or destroyed.
+Even though they are not affected by variable resolution, we also need visit methods for all other syntax tree
+nodes to recurse into their subtrees. 
+
+Resolution is different from interpretation in that there is no control flow. For an if statement, we
+resolve both the consequent and the alternative. Where a dynamic execution only steps into one of the branches that is run,
+a static analysis is the converse-it analyzes any branch that could be run. Since either one could be reached
+during runtime, we resolve both branches. 
+
+For while statements, we resolve the condition and the body exactly once. Likewise, for logical operators,
+we resolve both operands. We do not short-circuit. 
+
+## Interpreting Resolved Variables
+
+Each time the resolver class visits a variable, it tells the interpreter
+how many scopes there are between the current scope and the scope where the vairable is defined.
+At runtime, this corresponds to exactly the number of environments between the current environment
+and the environment where the variable can be found. 
+
+We want to store the resolution information somewhere, so we can use it when a variable or assignment expression is later executed. One obvious place
+is in the syntax tree node itself. That is a fine approach, and many compilers do this too. 
+
+We could do that, but it would require mucking around with the syntax tree. Instead,
+we will take another approach and store it to the side in a map that associates each syntax tree node
+with its resolved data. 
+
+Interactive tools like IDEs often incrementally rephrase and re-resolve parts
+of the user program. It may be challenging to find all the bits of state that need
+recalculating when they are hiding in the foliage of the syntax tree. A benefit of storing
+this data outside the nodes is that it makes it easy to discard the data.
+
+You might think we need some sort of nested tree structure to avoid getting confused when there
+are multiple expressions that reference the same variable, but each expression node is its own object with
+its own unique identity. A single monolithic map doesn't have any trouble keeping them separated.
+
+## Accessing a Resolved Variable
+
+Accessing a resolved variable happens through the lookup function. First, we look up the resolved distance in the map.
+Remember that we resolved only local variables. Globals are treated specially, and we do not
+end up in the map (hence the name locals). So, if we cannot find a distance in the map, it must be global.
+In that case, we look it up dynamically, directly in the global environment. That throws a runtime error if the variable is not defined.
+
+If we do get a distance, we have a local variable, and we get to take advantage of the results of our static analysis. 
+Instead of calling `get()`, we call this new method on the environment.
+
+The old get() method dynamically walks the chain of enclosing environments, scouring each one to see if the variable might be hiding in there somewhere. But now we know exactly which environment in the chain will have the variable. We reach it using this helper method:
+
+The helper method walks a fixed number of hops up the parent chain and returns the environment there.
+Once we have that, `get_at()` simply returns the value of the variable in that environment's map.
+It does not even have to check if the variable is there-we know it will be there because the resolver
+found it before.
+
+## Assigning to a Resolved Variable
+
+We can also use a variable by assigning to it. The changes to visiting an assignment expression are similar.
+
+In essence, once we know the number of jumps up the environment to access the variable, the respective `get()` and `assign()` functions only
+need to traverse that many environments until it performs their respective operations. This
+is guaranteed to be valid because the resolver ahs already done the work.
+
+
+## Resolution Errors
+
+Since we are doing semantic analysis pass, we have the opportunity to make the language's
+semantics more precise. This will let us catch bugs early before running the code.
+
+We do allow declaring multiple variables with the same name in the global scope, but doing so in a local scope is probably a mistake. If they knew the variable already existed, they would have assigned to it instead of using var. And if they didn’t know it existed, they probably didn’t intend to overwrite the previous one.
+
+When we declare a variable in a local scope, we already know the names of every variable previously declared in that same scope. If we see a collision, we report an error.
+
+## Invalid Return Errors
+
+```aiignore
+return "at top level";
+```
+
+This executes a return statement, but it’s not even inside a function at all. It’s top-level code. I don’t know what the user thinks is going to happen, but I don’t think we want Lox to allow this.
+
+We can detect this statically. Much like we track scopes as we walk the tree, we can track whether or not we are inside a function.
+
+We stash the previous value of the field in a local variable first. Remember, lox has local functions, so you can nest functions declarations arbitrarily deep. We need to track not just that we are in a function, but how deep we are in a function.
+
+We could use an explicit stack of FunctionType values for that, but instead we will piggyback on the JVM. We store the previous value in a local on a Java stack.. 
+When we are done resolving the function body, we restore the field to that value.
+
+Now that we can always tell whether or not we’re inside a function declaration, we check that when resolving a return statement.
+
+There is one more piece. Back at the main Lox class that stitches everything together, we are careful to not run the interpreter
+if any parse errors are encountered. That check runs before the resolver so that we do not try to resolve syntactically invalid code.
+
+But we also need to skip the interpreter if there are resolution errors, so we add another check.
+
+You could imagine doing a lot more analysis here. For example, if we added break statements to Lox, we would probably want to ensure they are only used inside loops. 
+
+We could go farther and report warnings for code that is not necessarily wrong but probably is not useful. 
+For example, many IDEs will warn if you have unreachable code after a return statement or a local variable whose value is never read. 
+All of that would be pretty easy to add to our static visiting pass, or as separate passes/
+
+The choice of determining how many passes to implement is difficult. Though having multiple small, simpler passes are easier to maintain,
+there is a real runtime cost to traversing the entire syntax tree multiple times (for each pass).
+Consider bundling multiple passes into a single pass.

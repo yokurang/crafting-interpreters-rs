@@ -16,3 +16,6 @@ pub use environment::*;
 
 pub mod function;
 pub use function::*;
+
+pub mod resolver;
+pub use resolver::*;

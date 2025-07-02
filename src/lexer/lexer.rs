@@ -35,7 +35,7 @@ of characters, maps to a particular token. We need a token for every atomic stru
 as per the language specification.
 */
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TokenType {
     // single character tokens
     LeftParen,
@@ -104,7 +104,7 @@ of the source file to the line at which an error occurred, and the length of the
 The row and column positions can be inferred from these two variables.
 */
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
@@ -129,12 +129,30 @@ impl fmt::Display for Token {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)] // PartialEq is fine for deriving
 pub enum Literal {
     String(String),
     Number(f64),
     Bool(bool),
     Nil,
+}
+
+// Implementing Eq for Literal enum
+impl Eq for Literal {}
+
+// Implementing Hash for Literal enum
+impl std::hash::Hash for Literal {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Literal::String(s) => s.hash(state),
+            Literal::Number(n) => {
+                // Convert f64 to bits for hashing
+                n.to_bits().hash(state)
+            },
+            Literal::Bool(b) => b.hash(state),
+            Literal::Nil => 0.hash(state),
+        }
+    }
 }
 
 /* Scanner:

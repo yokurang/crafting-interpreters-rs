@@ -30,6 +30,7 @@ pub trait Visitor {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Eq, Hash, PartialEq)]
 pub enum Expr {
     Binary {
         left: Box<Expr>,

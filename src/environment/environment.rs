@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::{RuntimeError, Stmt, Value};
+use crate::{Literal, RuntimeError, Stmt, TokenType, Value};
 use crate::lexer::Token;
 
 #[derive(Debug, Clone, Default)]
@@ -58,5 +58,47 @@ impl Environment {
             name.clone(),
             format!("Undefined variable '{}'.", name.lexeme),
         ))
+    }
+
+    pub fn assign_at(&mut self, distance: usize, name: &Token, value: Value) -> Result<(), RuntimeError> {
+        // Get the correct ancestor environment at the given depth and mutably borrow it
+        let ancestor = self.ancestor_mut(distance);
+        ancestor.values.insert(name.lexeme.clone(), value); // Insert at the correct environment
+        Ok(())
+    }
+
+    pub fn ancestor_mut(&mut self, distance: usize) -> &mut Environment {
+        let mut environment = self;
+        for _ in 0..distance {
+            match &mut environment.enclosing {
+                Some(parent) => environment = parent,
+                None => panic!("Ancestor not found, should not happen"),
+            }
+        }
+        environment
+    }
+
+    pub fn ancestor(&self, distance: usize) -> &Environment {
+        let mut environment = self;
+        for _ in 0..distance {
+            match &environment.enclosing {
+                Some(parent) => environment = parent,
+                None => panic!("Ancestor not found, should not happen"),
+            }
+        }
+        environment
+    }
+
+    pub fn get_at(&self, distance: usize, name: &str) -> Result<Value, RuntimeError> {
+        let ancestor = self.ancestor(distance);
+        ancestor.values.get(name).cloned().ok_or_else(|| {
+            let dummy_token = Token {
+                token_type: TokenType::LeftParen,
+                lexeme: name.to_string(),
+                literal: Literal::Nil,
+                line: 0, // default line number, could be adjusted
+            };
+            RuntimeError::new(dummy_token, format!("Undefined variable '{}'.", name))
+        })
     }
 }
