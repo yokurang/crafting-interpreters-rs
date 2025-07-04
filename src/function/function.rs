@@ -4,6 +4,7 @@ use std::rc::Rc;
 use crate::environment::Environment;
 use crate::evaluator::{Evaluator, RuntimeError};
 use crate::evaluator::{Value, LoxCallable};
+use crate::LoxInstance;
 use crate::parser::Stmt;
 
 
@@ -48,18 +49,25 @@ pub struct LoxFunction {
     // keep an Rc so multiple closures can share the same declaration
     declaration: Rc<Stmt>,        // must be Stmt::Function
     closure:     Rc<Environment>,
+    is_initializer: bool,
 }
 
 impl LoxFunction {
-    pub fn new(decl: Stmt, closure: Rc<Environment>) -> Self {
+    pub fn new(decl: Stmt, closure: Rc<Environment>, is_initializer: bool) -> Self {
         Self {
             declaration: Rc::new(decl),
             closure,
+            is_initializer
         }
+    }
+    pub fn bind(&self, instance: LoxInstance) -> LoxFunction {
+        let mut env = Environment::new_enclosed((*self.closure).clone());
+        env.define("this".to_string(), Value::LoxInstance(instance));
+
+        LoxFunction::new((*self.declaration).clone(), Rc::new(env), self.is_initializer)
     }
 }
 
-/* ────────────────────── LoxCallable implementation ─────────────────────── */
 impl LoxCallable for LoxFunction {
     fn arity(&self) -> usize {
         match &*self.declaration {
@@ -74,23 +82,27 @@ impl LoxCallable for LoxFunction {
         mut arguments: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
 
-        // ① new activation-record that chains to the captured environment
-        let closure:Environment = (*self.closure).clone();
+        let closure = (*self.closure).clone();
         let mut env = Environment::new_enclosed(closure);
-
-        // ② bind parameters exactly as before …
+        
         if let Stmt::Function { params, .. } = &*self.declaration {
             for (tok, arg) in params.iter().zip(arguments.drain(..)) {
                 env.define(tok.lexeme.clone(), arg);
             }
         }
 
-        // ③ execute body exactly as before
         if let Stmt::Function { body, .. } = &*self.declaration {
             match interpreter.execute_block(body, env) {
-                Ok(())                              => Ok(Value::Nil),
-                Err(RuntimeError::Return(v))        => Ok(v.unwrap_or(Value::Nil)),
-                Err(e)                              => Err(e),
+                // If it completes normally, return nil (no explicit return)
+                Ok(()) => {
+                    // If it's an initializer, return `this` instead of `nil`
+                    if self.is_initializer {
+                        return self.closure.get_at(0, "this");
+                    }
+                    Ok(Value::Nil)
+                }
+                Err(RuntimeError::Return(v)) => Ok(v.unwrap_or(Value::Nil)),
+                Err(e) => Err(e),
             }
         } else {
             unreachable!("LoxFunction without Function declaration");

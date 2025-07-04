@@ -2,7 +2,7 @@ use log::error;
 use crate::expr::Expr;
 use crate::lexer::Token;
 use crate::{report, Literal, Stmt, TokenType};
-use crate::TokenType::{LeftParen, RightParen};
+use crate::TokenType::{Dot, Identifier, LeftParen, Less, RightParen};
 /*
 The parser takes the tokens as input and produces an abstract syntax tree, a more information-rich
 data structure, as output. As a reminder, tokens are the output of the lexer, which takes raw
@@ -107,7 +107,8 @@ it will discard tokens that would have caused cascading errors, so the parser ca
 the tokens at the next statement.
 */
 #[derive(Debug)]
-struct ParseError;
+#[derive(Clone)]
+pub(crate) struct ParseError;
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -182,10 +183,46 @@ impl Parser {
             match self.function() {
                 Ok(stmt) => Ok(stmt),
                 Err(error) => panic!("Error in processing a function.")
-            } 
+            }
+        } else if self.match_tokens(&[TokenType::Class]) {
+            match self.class_declaration() {
+                Ok(stmt) => Ok(stmt),
+                Err(error) => panic!("Error in processing a Class.")
+            }
         } else {
             self.statement()
         }
+    }
+    
+    fn class_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(TokenType::Identifier, "Expect class name.")?;
+
+        let mut superclass = None;
+        if self.match_tokens(&[TokenType::Less]) {
+            self.consume(TokenType::Identifier, "Expect superclass name.").expect("TODO: panic message");
+            let superclass_token = self.previous().clone();
+            superclass = Some(Box::new(Expr::Variable { name: superclass_token, initializer: None }));
+
+        }
+
+        // Expect the '{' character that starts the class body
+        self.consume(TokenType::LeftBrace, "Expect '{' before class body.")?;
+
+        // Parse methods inside the class body
+        let mut methods = Vec::new();
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            methods.push(self.function()); // Parse methods (functions) inside the class
+        }
+
+        // Consume the '}' to close the class body
+        self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
+
+        // Return the class declaration statement
+        Ok(Stmt::Class {
+            name,
+            methods,
+            superclass,
+        })
     }
 
     fn function(&mut self) -> Result<Stmt, ParseError> {
@@ -193,7 +230,7 @@ impl Parser {
         // 1. Function name
         let name = self.consume(TokenType::Identifier,
                                 "Expect function name.")?;
-        
+
         // 2. Parameter list
         self.consume(TokenType::LeftParen,
                      "Expect '(' after function name.")?;
@@ -202,7 +239,7 @@ impl Parser {
         // the first if statement checks for the zero-parameter case
         if !self.check(&TokenType::RightParen) {
             loop {
-                // the loop statement keeps parsing arguments as long as we can find 
+                // the loop statement keeps parsing arguments as long as we can find
                 // arguments separated by a comma
                 if params.len() >= 255 {
                     // same error style as the book
@@ -276,7 +313,7 @@ impl Parser {
         } else if self.match_stmt(TokenType::LeftBrace) {
             Ok(Stmt::Block {statements: self.block()})
         } else if self.match_stmt(TokenType::If) {
-          self.if_stmt()  
+          self.if_stmt()
         } else if self.match_stmt(TokenType::While) {
             self.while_stmt()
         } else if self.match_stmt(TokenType::For) {
@@ -298,7 +335,7 @@ impl Parser {
     }
 
     /*
-    Since an expression can start through a number of different tokens, 
+    Since an expression can start through a number of different tokens,
     it is difficult to tell if a return value is present. Instead, we check if it’s absent.
     We check if the next token is a semicolon. If so, then it cannot be an expression,
     and we return None.
@@ -480,6 +517,14 @@ impl Parser {
                 });
             }
 
+            if let Expr::Get { object, name } = expr {
+                return Ok(Expr::Set {
+                    object,
+                    name,
+                    value: Box::new(value),
+                });
+            }
+
             // any other LHS → error
             return Err(ParseError);
         }
@@ -586,12 +631,19 @@ impl Parser {
 
     fn call(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.primary();
-
+        
+        // we zip along the tokens and build up a chain of call and get expressions as we find parentheses and dots.
         loop {
             if self.match_tokens(&[LeftParen]) {
                 // each time we see a '(' we call finish call to parse the call expression
                 // using the previously parsed as the callee
                 expr = self.finish_call(expr?);
+            } else if self.match_tokens(&[TokenType::Dot]) {
+                let name = self.consume(TokenType::Identifier, "Expect property name after '.'.")?;
+                expr = Ok(Expr::Get {
+                    object: Box::new(expr?),  
+                    name, 
+                });
             } else {
                 break
             }
@@ -671,6 +723,19 @@ impl Parser {
                 Ok(Expr::Variable {
                     name: self.previous().clone(),
                     initializer: None
+                })
+            }
+            TokenType::This => {
+                Ok(Expr::This {
+                    keyword: self.previous().clone()
+                })
+            }
+            TokenType::Super => {
+                let keyword = self.previous().clone();
+                self.consume(TokenType::Dot, "Expect '.' after 'super'.").expect("TODO: panic message");
+                let method = self.consume(TokenType::Identifier, "Expect superclass method name.");
+                Ok(Expr::Super {
+                    keyword: keyword.clone(), method: method?
                 })
             }
             _ => Err(Parser::error(self.peek(), "Expected an expression.")),

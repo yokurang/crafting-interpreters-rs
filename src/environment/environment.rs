@@ -8,7 +8,7 @@ pub struct Environment {
     values: HashMap<String, Value>,
 
     /// Optional parent scope
-    enclosing: Option<Box<Environment>>,
+    pub(crate) enclosing: Option<Box<Environment>>,
 }
 
 impl Environment {

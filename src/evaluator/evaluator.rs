@@ -8,13 +8,15 @@ The user sees these as Lox objects, but they are implemented in the underlying l
 That means bridging the lands of Lox's dynamic typing and Java's static types. A variable in Lox can
 store a value of any (Lox) type and can even store values of different types at different points in time.
 */
-
+use std::collections::HashMap;
 use crate::lexer::{Literal, TokenType};
 use crate::parser::expr::{Expr, Visitor};
-use crate::{Environment, LoxFunction, Stmt, StmtVisitor, Token};
+use crate::{Environment, Interpreter, LoxFunction, LoxInstance, Stmt, StmtVisitor, Token};
+use crate::{LoxClass};
 use std::fmt;
 use std::fmt::Formatter;
 use std::rc::Rc;
+
 /*
 A literal is a bit of syntax that produces a value. Literals are the atomic bits that
 compose a syntax. A literal comes from the parser's input. This is an important distinction,
@@ -24,7 +26,9 @@ which is observed at runtime.
 */
 
 pub struct Evaluator {
-    pub environment: Environment
+    globals: Environment,
+    pub(crate) environment: Environment,
+    locals: HashMap<Expr, usize>,
 }
 
 // representation of lox values at runtime
@@ -35,6 +39,9 @@ pub enum Value {
     String(String),
     Nil,
     Callable(Rc<dyn LoxCallable>),
+    LoxClass(LoxClass),
+    LoxInstance(LoxInstance),
+    LoxFunction(LoxFunction),  // Add this variant for LoxFunction
 }
 
 pub trait LoxCallable: std::fmt::Debug {
@@ -80,6 +87,9 @@ impl fmt::Display for Value {
             Value::String(s) => write!(f, "{}", s),
             Value::Nil => write!(f, "nil"),
             Value::Callable(_) => write!(f, "<fn>"),
+            Value::LoxClass(klass) => write!(f, "{}", klass.stringify()),
+            Value::LoxInstance(instance) => write!(f, "{}", instance.stringify()),
+            Value::LoxFunction(fun) => write!(f, "{}", fun),
         }
     }
 }
@@ -97,25 +107,12 @@ impl Visitor for Evaluator {
             Literal::String(s) => Ok(Value::String(s.clone())),
         }
     }
-
     // Since a grouping node has a reference to an expression inside parentheses,
     // to evaluate the grouping expression, we recursively evaluate the subexpression
     // and return it
     fn visit_grouping_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         self.evaluate(expr)
     }
-
-    // first we evaluate the expression embedded in the unary expression,
-    // then we apply the unary token on the expression we evaluated
-    // finally we need an error handling mechanism to ensure that only unary
-    // operators are valid
-    // if we apply a minus, the subexpression has to be a number
-    // we cast it before applying the operation, which happens at runtime
-    // this is the essence of what makes the language dynamically typed
-    // the recursion is post-order traversal, i,e. we evaluate the children first before the current node
-    // pre-order traversal works on the parent first then the child
-    // in-order traversal: left child -> parent -> right child
-    // depth order traversal: breadth-first search
 
     fn visit_unary_expr(&mut self, operator: &Token, right: &Expr) -> Result<Value, RuntimeError> {
         let right_val = self.evaluate(right)?;
@@ -279,9 +276,22 @@ impl Visitor for Evaluator {
         }
     }
 
+
     fn visit_variable_expr(&mut self, token: &Token, _initializer: &Option<Box<Expr>>) -> Result<Value, RuntimeError> {
         self.environment.get(token)
     }
+
+    // first we evaluate the expression embedded in the unary expression,
+    // then we apply the unary token on the expression we evaluated
+    // finally we need an error handling mechanism to ensure that only unary
+    // operators are valid
+    // if we apply a minus, the subexpression has to be a number
+    // we cast it before applying the operation, which happens at runtime
+    // this is the essence of what makes the language dynamically typed
+    // the recursion is post-order traversal, i,e. we evaluate the children first before the current node
+    // pre-order traversal works on the parent first then the child
+    // in-order traversal: left child -> parent -> right child
+    // depth order traversal: breadth-first search
 
     fn visit_assign_expr(&mut self, token: &Token, value: &Expr) -> Result<Value, RuntimeError> {
         let value = self.evaluate(value)?;
@@ -342,7 +352,7 @@ impl Visitor for Evaluator {
         invoking a `call()` method on it. The Java representation of any Lox
         object thay can be called like a function implement this interface.
         This includes user-defined functions and also class objects since classes are
-        'called' to construct new instances. 
+        'called' to construct new instances.
         */
 
         // 3. Check that the callee is actually callable
@@ -369,6 +379,87 @@ impl Visitor for Evaluator {
             )),
         }
     }
+
+    fn visit_get_expr(&mut self, object: &Expr, name: &Token) -> Result<Value, RuntimeError> {
+        let object = self.evaluate(object)?;
+
+        // Check if the object is an instance (LoxInstance or similar in Rust)
+        if let Value::LoxInstance(instance) = object {
+            // Call the `get` method to retrieve the property
+            instance.get(name)
+        } else {
+            // If it's not an instance, throw an error
+            Err(RuntimeError::new(
+                name.clone(),
+                "Only instances have properties.".to_string(),
+            ))
+        }
+    }
+
+    fn visit_set_expr(&mut self, object: &Expr, name: &Token, value: &Expr) -> Result<Value, RuntimeError> {
+        // Evaluate the object (the instance)
+        let object = self.evaluate(object)?;
+
+        // Check if the object is a LoxInstance
+        if let Value::LoxInstance(mut instance) = object {
+            // Evaluate the value to be set
+            let value = self.evaluate(value)?;
+
+            // Call the set method on the LoxInstance
+            instance.set(name, &value);
+
+            // Return the value that was set
+            Ok(value)
+        } else {
+            // If the object isn't a LoxInstance, throw an error
+            Err(RuntimeError::new(
+                name.clone(),
+                format!("Only instances have fields. Attempted to set field '{}' on a non-instance object.", name.lexeme),
+            ))
+        }
+    }
+
+    fn visit_this_expr(&mut self, this: &Token) -> Result<Value, RuntimeError> {
+        self.look_up_variable(this, &Expr::This { keyword: this.clone() })
+    }
+    fn visit_super_expr(&mut self, keyword: &Token, method: &Token) -> Result<Value, RuntimeError> {
+        // Look up the 'super' in the current environment
+        let distance = self.locals.get(&Expr::Super {
+            keyword: keyword.clone(),
+            method: method.clone()
+        }); // Get the distance of the `super` keyword in the environment
+
+        if let Some(distance) = distance {
+            // Access the superclass value from the environment at the given distance
+            let superclass = self.environment.get_at(*distance, "super")?;
+
+            // Check if the superclass is of type LoxClass
+            if let Value::LoxClass(superclass_class) = superclass {
+                // Access the `this` object, which is the current instance
+                let object_value = self.environment.get_at(*distance - 1, "this")?;
+
+                // Match on the value to ensure it's a LoxInstance
+                if let Value::LoxInstance(object) = object_value {
+                    // Look up the method in the superclass
+                    if let Some(method_fn) = superclass_class.find_method(method.lexeme.clone()) {
+                        // Bind the method to the instance and return the result
+                        return Ok(Value::LoxFunction(method_fn.bind(object)));
+                    }
+                } else {
+                    return Err(RuntimeError::new(
+                        keyword.clone(),
+                        "Expected an instance of the class, but found something else.".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Err(RuntimeError::new(
+            keyword.clone(),
+            "Cannot access superclass method from here.".to_string(),
+        ))
+    }
+
 }
 
 /*
@@ -458,7 +549,7 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
         This is similar to how we interpret other literal expressions. We take a function
         syntax node, a compile-time representation of the function - and convert it to a runtime
         representation of the code. HEre, that's a LoxFunction that wraps the syntax node.
-        
+
         Function declarations are different from other literal nodes in that the
         declaration also binds the resulting object to a new variable. So, after creating the
         LoxFunction, we create a new binding in the current environment and
@@ -474,7 +565,12 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
         let closure: Rc<Environment> = Rc::from(self.environment.clone());
 
         // wrap it into a callable object
-        let function_obj = Value::Callable(Rc::new(LoxFunction::new(func_decl, closure)));
+        /*
+        We cannot see if the name of the LoxFunction is `init` because the user could have
+        defined a function with that name. In that case, there is no this to return. To avoid that weird edge
+        case, we'll directly store whether the LoxFunction represents an initialized method.
+        */
+        let function_obj = Value::Callable(Rc::new(LoxFunction::new(func_decl, closure, false)));
 
         // define the variable in the *current* environment
         self.environment.define(name.lexeme.clone(), function_obj);
@@ -493,6 +589,88 @@ impl StmtVisitor<Result<(), RuntimeError>> for Evaluator {
         // Propagate the return using a special error or control signal
         Err(RuntimeError::Return(result))
     }
+
+    // we convert the AST representation into LoxClass, the runtime representation
+    // by declaring the class in the environment first allows methods to reference itself
+    // Where an instance stores state, the class stores behavior. LoxInstance has its map of fields, and LoxClass gets a map of methods. Even though methods are owned by the class, they are still accessed through instances of that class.
+    fn visit_class_stmt(
+        &mut self,
+        name: &Token,
+        methods: &Vec<Result<Stmt, ParseError>>,
+        superclass: &Option<Box<Expr>>,
+    ) -> Result<(), RuntimeError> {
+
+        let superclass_value = if let Some(superclass_expr) = superclass {
+            // Evaluate the superclass expression
+            let superclass_instance = self.evaluate(superclass_expr)?;
+
+            // Check if the superclass is a LoxClass
+            if let Value::LoxClass(superclass_class) = superclass_instance {
+                Some(Box::new(superclass_class))
+            } else {
+                return Err(RuntimeError::new(
+                    name.clone(),
+                    "Superclass must be a class.".to_string(),
+                ));
+            }
+        } else {
+            None
+        };
+        
+        // Define the class in the environment (similar to declaring it)
+        self.environment.define(name.lexeme.clone(), Value::Nil);
+
+        /*
+        In the environment, we store a reference to the superclass - the acutal LoxClass object for the superclass which we have now that we are in the runtime.
+        Then we create the LoxFunction for each method. Those will capture the current environment - the one where we bound "super" as their closure, holding
+        on to the superclass like we need.
+        */
+        if let Some(superclass_value) = &superclass_value {
+            // Create an environment with "super" as a variable
+            let mut env = Environment::new_enclosed(self.environment.clone());
+            env.define("super".to_string(), Value::LoxClass(*superclass_value.clone()));
+            // We need to use this environment for method resolution
+            self.environment = env;
+        }
+        
+        // Create a HashMap to store methods
+        let mut class_methods = HashMap::new();
+
+        // Iterate over each method in the class
+        for method in methods {
+            if let Ok(Stmt::Function { name, params, body }) = method {
+                // Create a LoxFunction for the method
+                match method {
+                    Ok(stmt) => {
+                        let function = LoxFunction::new(stmt.clone(), Rc::from(self.environment.clone()),
+                        name.lexeme.eq("init")
+                        );
+                        // Store the function in the methods map
+                        class_methods.insert(name.lexeme.clone(), function);
+                    }
+                    Err(e) => {}
+                }
+
+            }
+        }
+
+        // Create the class object with the methods
+        let class = LoxClass::new(
+            name.lexeme.clone(),
+            class_methods.clone(),
+            superclass_value.clone(),
+        );
+
+        if superclass_value.is_some() {
+            self.environment = *self.environment.enclosing.clone().unwrap();
+        }
+
+        // Assign the class to the environment
+        self.environment.assign(name, Value::LoxClass(class))?;
+
+        Ok(())
+    }
+
 }
 
 #[derive(Debug)]
@@ -511,6 +689,7 @@ impl RuntimeError {
 }
 
 use std::fmt::{Display};
+use crate::parser::ParseError;
 
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -533,12 +712,25 @@ impl std::error::Error for RuntimeError {}
 impl Evaluator {
     pub fn new(environment: Environment) -> Self {
         Self {
-            environment
+            globals: environment.clone(),
+            environment,
+            locals: HashMap::new(),
         }
     }
 
     pub fn evaluate(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         expr.accept(self)
+    }
+
+    pub fn look_up_variable(&mut self, name: &Token, expr: &Expr) -> Result<Value, RuntimeError> {
+        // Check if this is a local variable or a global variable
+        if let Some(distance) = self.locals.get(expr) {
+            // Access the variable in the appropriate scope
+            self.environment.get_at(*distance, &name.lexeme)
+        } else {
+            // Fallback to global environment if not found in local scope
+            self.globals.get(name)
+        }
     }
 
     pub fn execute(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {

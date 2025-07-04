@@ -19,3 +19,6 @@ pub use function::*;
 
 pub mod resolver;
 pub use resolver::*;
+
+pub mod class;
+pub use class::*;

@@ -27,6 +27,18 @@ pub trait Visitor {
         paren:  &Token,
         arguments: &[Expr],
     ) -> Result<Value, RuntimeError>;
+    fn visit_get_expr(
+        &mut self, object: &Expr, name: &Token
+    ) -> Result<Value, RuntimeError>;
+    fn visit_set_expr(
+        &mut self, object: &Expr, name: &Token, value: &Expr
+    ) -> Result<Value, RuntimeError>;
+    fn visit_this_expr(
+        &mut self, this: &Token
+    ) -> Result<Value, RuntimeError>;
+    fn visit_super_expr(
+        &mut self, keyword: &Token, method: &Token
+    ) -> Result<Value, RuntimeError>;
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +77,21 @@ pub enum Expr {
         paren: Token, // for error reporting
         arguments: Vec<Expr>, // can be zero or more
     },
+    Get {
+        object: Box<Expr>,
+        name: Token,
+    },
+    Set {
+        object: Box<Expr>,
+        name: Token,
+        value: Box<Expr>,
+    },
+    This {
+        keyword: Token
+    },
+    Super {
+        keyword: Token, method: Token
+    }
 }
 
 impl Expr {
@@ -89,7 +116,19 @@ impl Expr {
                 callee,
                 paren,
                 arguments
-            } => visitor.visit_call_expr(callee, paren, arguments)
+            } => visitor.visit_call_expr(callee, paren, arguments),
+            Expr::Get {
+                object, name
+            } => visitor.visit_get_expr(object, name),
+            Expr::Set {
+                object, name, value
+            } => visitor.visit_set_expr(object, name, value),
+            Expr::This {
+                keyword
+            } => visitor.visit_this_expr(keyword),
+            Expr::Super {
+                keyword, method
+            } => visitor.visit_super_expr(keyword, method),
         }
     }
 }

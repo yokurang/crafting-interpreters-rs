@@ -1,7 +1,7 @@
 use crate::interpreter::Interpreter; // Assuming Interpreter is the same as Evaluator
-use crate::parser::{parser, Expr, Visitor}; // Importing the Expr and Stmt enums
+use crate::parser::{parser, Expr, ParseError, Visitor}; // Importing the Expr and Stmt enums
 use crate::lexer::{Literal};
-use crate::{Stmt, StmtVisitor, Token, Value};
+use crate::{error, Stmt, StmtVisitor, Token, Value};
 use crate::RuntimeError;
 /*
 Since the resolver needs to visit every node in the syntax tree, it implements
@@ -13,7 +13,7 @@ when it comes to resolving variables.
 - A variable declaration adds a new variable to the current scope
 - A variable and assignment expression need to have their variable resolved
 
-The rest of the nodes do not do anything special. However, we still need to 
+The rest of the nodes do not do anything special. However, we still need to
 implement visit methods to traverse into their subtrees. Even though a + operator does not have any variables to resolve, one of its operands might.
 
 Lexical scopes are implemented via a stack of hashmaps. They are nested in the interpreter and the resolver. They behave like a stack. The interpreter implements that stack using a linked list - the chain of environments. In the resolver, it is implemented using a stack.
@@ -27,9 +27,9 @@ Since scopes are stored explicitly in a stack, when ending a scope, we pop that 
 What happens when the initializer for a local variable refers to a variable with
 the same name as the variable being declared?
 
-1. Run the initializer, then put the new variable in scope. Here, the new local would be initialised with other, the value of the global variable. 
+1. Run the initializer, then put the new variable in scope. Here, the new local would be initialised with other, the value of the global variable.
 2. Put the new variable in scope, then run the initializer. This means you could observe a variable before initialized, so we would need to figure out
-what value it would have then. Probably nil. That means the new local a would be re-initialised to its own implicitly initialied value, nil. 
+what value it would have then. Probably nil. That means the new local a would be re-initialised to its own implicitly initialied value, nil.
 3. Make it a error to reference a variable in its initializer. Have the interpreter fail either at compile time or runtime if an initializer mentiones the variable being initialized.
 
 Do either of those first two options look like something a user actually wants? Shadowing is rare and often an error, so initializing a shadowing variable based on the value of the shadowed one seems unlikely to be deliberate.
@@ -43,21 +43,33 @@ In order to do that, as we visit expressions, we need to know if we’re inside 
 This looks, for good reason, a lot like the code in environment for evaluating
 We start at the innermost scope and work outwards, looking in each map for a matching game. If we find the variable, we resolve it, passing in the number of scopes between the current innermost scope and the scope where the variable was found. So, if the variable was found in the current scope, we pass in zero. If it is in the immediately enclosing scope, 1.
 
-If we walk through all of the block scopes and never find the variable, we leave it unresolved and assume it is global. We will get to the implementation of that resolve() later. 
+If we walk through all of the block scopes and never find the variable, we leave it unresolved and assume it is global. We will get to the implementation of that resolve() later.
 */
 
 use std::collections::HashMap;
+use crate::FunctionType::Initializer;
+use crate::Value::Nil;
 
 pub struct Resolver<'a> {
     interpreter: &'a mut Interpreter,  // Interpreter is passed as a mutable reference
     scopes: Vec<HashMap<String, bool>>, // Stack of scopes
     current_function: FunctionType,
+    current_class: ClassType,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ClassType {
+    None,
+    Class,
+    Subclass,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum FunctionType {
     None,
     Function,
+    Method,
+    Initializer,
 }
 
 impl<'a> Resolver<'a> {
@@ -66,6 +78,7 @@ impl<'a> Resolver<'a> {
             interpreter,
             scopes: Vec::new(),
             current_function: FunctionType::None,
+            current_class: ClassType::None,
         }
     }
 
@@ -89,11 +102,11 @@ impl<'a> Resolver<'a> {
     }
 
     /*
-    A declaration adds the variable to the innermost scope so that the variable shadows any other variables with the same name in outer scopes. We mark it as not ready yet by binding its name to false in the scope map. The value associated with a key in the scope map represents whether or not we have finished resolving that variable's initializer. 
-    
-    After declaring the variable, we resolve its initializer expression in that same scope where the new variable now exists but is unavailable. Once the initializer expression is done, the variable is ready. We do this by defining it. 
-    
-    We set the variable's value in the scope map to true to mark it as fully initialized and ready for use. 
+    A declaration adds the variable to the innermost scope so that the variable shadows any other variables with the same name in outer scopes. We mark it as not ready yet by binding its name to false in the scope map. The value associated with a key in the scope map represents whether or not we have finished resolving that variable's initializer.
+
+    After declaring the variable, we resolve its initializer expression in that same scope where the new variable now exists but is unavailable. Once the initializer expression is done, the variable is ready. We do this by defining it.
+
+    We set the variable's value in the scope map to true to mark it as fully initialized and ready for use.
     */
     fn declare(&mut self, name: &str) {
         if let Some(scope) = self.scopes.last_mut() {
@@ -122,6 +135,26 @@ impl<'a> Resolver<'a> {
     fn resolve_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         expr.accept(self)
     }
+
+    fn resolve_function(
+        &mut self,
+        name: &Token,
+        params: &Vec<Token>,
+        body: &Vec<Stmt>,
+        declaration: FunctionType,
+    ) {
+        self.begin_scope();
+        // Declare parameters as local variables inside the function
+        for param in params {
+            self.declare(&param.lexeme);
+            self.define(&param.lexeme);
+        }
+
+        // Resolve the body of the function
+        self.resolve_stmt(body);
+
+        self.end_scope();
+    }
 }
 
 // Implementing StmtVisitor for Resolver
@@ -140,8 +173,8 @@ impl<'a> StmtVisitor<Result<(), RuntimeError>> for Resolver<'a> {
         Ok(())
     }
 
-    // Resolving a variable declaration adds a new entry to the current innermost scope's map. We split the binding into two steps: Declaration and definition. 
-    
+    // Resolving a variable declaration adds a new entry to the current innermost scope's map. We split the binding into two steps: Declaration and definition.
+
     fn visit_var_stmt(&mut self, stmt: &Stmt) -> Result<(), RuntimeError> {
         if let Stmt::Var { name, initializer, .. } = stmt {
             self.declare(&name.lexeme);  // Declare the variable
@@ -212,15 +245,87 @@ impl<'a> StmtVisitor<Result<(), RuntimeError>> for Resolver<'a> {
         Ok(())
     }
 
-
     fn visit_return_stmt(&mut self, keyword: &Token, value: &Option<Box<Expr>>) -> Result<(), RuntimeError> {
         if let Some(v) = value {
+            if self.current_function == FunctionType::Initializer {
+                error(keyword.line, "Can't return a value from an initializer.")
+            }
             self.resolve_expr(v)?;
         }
         Ok(())
     }
 
-    // You may need to add other methods for resolving expressions (resolve_expr, resolve_stmt, etc.)
+
+    /* declaring a class as a local variable here
+    If the class declaration has a superclass, we create a new scope surrounding all of its methods. In that scope, we define the name "super". Once we are done resolving that class's methods, we discard that scope.
+    */
+    fn visit_class_stmt(
+        &mut self,
+        name: &Token,
+        methods: &Vec<Result<Stmt, ParseError>>,
+        superclass: &Option<Box<Expr>>
+    ) -> Result<(), RuntimeError> {
+        /*
+        We store the previous value of the field in a local variable.
+        */
+        let enclosing_class = &self.current_class;
+        self.current_class = ClassType::Class;
+        // Declare the class in the current scope
+        self.declare(&name.lexeme);
+        self.define(&name.lexeme);
+
+        if let Some(superclass_expr) = superclass {
+            // Ensure that a class can't inherit from itself
+            if let Expr::Variable { name: superclass_name, .. } = &**superclass_expr {
+                if name.lexeme == superclass_name.lexeme {
+                    return Err(RuntimeError::new(
+                        superclass_name.clone(),
+                        "A class cannot inherit from itself.".to_string(),
+                    ));
+                }
+            }
+            // Resolve the superclass expression
+            self.resolve_expr(superclass_expr)?;
+        }
+
+        if let Some(superclass) = superclass {
+            self.current_class = ClassType::Subclass;
+            self.resolve_expr(superclass).expect("TODO: panic message");
+        }
+
+        if let Some(superclass) = superclass {
+            self.begin_scope();  // Start a new scope
+            self.scopes
+                .last_mut()  // Access the current scope (mutably)
+                .expect("No scope found.")  // Ensure the scope exists
+                .insert("super".to_string(), true);  // Insert "super" in the scope
+        }
+
+        // Create a new environment for the class and push a new scope for "this"
+        self.begin_scope();
+        self.scopes.last_mut().unwrap().insert("this".to_string(), true);
+
+        // Resolve methods inside the class
+        for method in methods {
+            if let Ok(Stmt::Function { name, params, body }) = method {
+                let mut declaration = FunctionType::Method;
+                // Resolve the method (similar to the visitFunctionStmt method)
+                if name.lexeme.eq("init") {
+                    declaration = FunctionType::Initializer;
+                }
+                self.resolve_function(&name, &params, &body, declaration);
+            }
+        }
+
+        // End the scope for the "this" reference
+        self.end_scope();
+        if superclass.is_some() {
+            self.end_scope();  // End the scope created for "super"
+        }
+        self.current_class = ClassType::None;
+
+        Ok(())
+    }
 }
 
 impl<'a> Visitor for Resolver<'a> {
@@ -269,7 +374,6 @@ impl<'a> Visitor for Resolver<'a> {
         Ok(Value::Nil)  // Not necessary to return a value here, it's for the resolution
     }
 
-
     // we resolve the expression for the assigned value in case it also contains references to other variables. Then we use our existing resolve local method top resolve the variable that's being assigned to
     fn visit_assign_expr(&mut self, token: &Token, value: &Expr) -> Result<Value, RuntimeError> {
         // Resolve the value that the variable is being assigned
@@ -301,6 +405,45 @@ impl<'a> Visitor for Resolver<'a> {
         for arg in arguments {
             self.resolve_expr(arg)?;
         }
+        Ok(Value::Nil)
+    }
+
+
+    fn visit_get_expr(&mut self, object: &Expr, name: &Token) -> Result<Value, RuntimeError> {
+        // since properties are looked up dynamically, they do not need to get resolved
+        // During resolution, we recurse only into the expression to the left of the dot. The actual property access happens in the interpreter.
+        self.resolve_expr(object)
+    }
+
+    fn visit_set_expr(&mut self, object: &Expr, name: &Token, value: &Expr) -> Result<Value, RuntimeError> {
+        self.resolve_expr(value).expect("TODO: panic message");
+        self.resolve_expr(object)
+    }
+
+    fn visit_this_expr(&mut self, this: &Token) -> Result<Value, RuntimeError> {
+        if self.current_class == ClassType::None {
+            error(this.line,"Can't use 'this' outside of a class.")
+        }
+        self.resolve_local(&Expr::This { keyword: this.clone() }, this);
+        Ok(Nil)
+    }
+
+    /*
+    It is a minor optimization, but we only create the superclass environment if the class actually has a superclass. There is no point in creating it when there is not a superclass since there would be no superclass to store in it anyway.
+    */
+    fn visit_super_expr(&mut self, keyword: &Token, method: &Token) -> Result<Value, RuntimeError> {
+        let dummy_expr = Expr::Literal {
+            value: Literal::Nil, // You can use any placeholder value here
+        };
+        
+        if self.current_class == ClassType::None { 
+            error(keyword.line, "Can't use 'super' outside of a class.")
+        } else if self.current_class != ClassType::Subclass {
+            error(keyword.line, "Can't use 'super' in a class with no superclass.")
+        }
+
+        // Resolve the "super" expression
+        self.resolve_local(&dummy_expr, keyword);
         Ok(Value::Nil)
     }
 }
